@@ -1,0 +1,6 @@
+{
+  "name": "Clip27 AI",
+  "description": "Estúdio de multiplicação de criativos em massa (Método 3x3x3 para TikTok Shop) e gerador de prompts estruturados para o Google Veo 3.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,100 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Perfil básico do usuário logado na plataforma.",
+      "type": "object",
+      "properties": {
+        "displayName": { "type": "string", "maxLength": 100 },
+        "email": { "type": "string", "format": "email", "maxLength": 120 },
+        "photoURL": { "type": "string", "maxLength": 500 },
+        "openRouterApiKey": { "type": "string", "maxLength": 256 },
+        "openRouterModel": { "type": "string", "maxLength": 128 },
+        "apifyToken": { "type": "string", "maxLength": 256 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["email", "createdAt"]
+    },
+    "Project": {
+      "title": "Project",
+      "description": "Campanha e matriz combinatória 3x3x3 de criativos.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "clipsCount": { "type": "number" },
+        "videosGenerated": { "type": "number" },
+        "status": { "type": "string", "enum": ["Ativo", "Arquivado", "Rascunho"] },
+        "niche": { "type": "string", "maxLength": 64 },
+        "hooks": { "type": "array" },
+        "bodies": { "type": "array" },
+        "ctas": { "type": "array" },
+        "headlines": { "type": "array" },
+        "antiShadowbanEnabled": { "type": "boolean" },
+        "autoSubtitlesEnabled": { "type": "boolean" },
+        "subtitleStyle": { "type": "string", "maxLength": 32 },
+        "aiCorrectionEnabled": { "type": "boolean" },
+        "ownerId": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["name", "status", "ownerId", "createdAt"]
+    },
+    "UsuarioLicenca": {
+      "title": "UsuarioLicenca",
+      "description": "Registro de licença de usuário, controle de trial comercial de 3 dias, anuidade, status de acesso e chaves de API sincronizadas entre dispositivos.",
+      "type": "object",
+      "properties": {
+        "ID_Usuario": { "type": "string" },
+        "Nome": { "type": "string", "maxLength": 128 },
+        "Email": { "type": "string", "format": "email", "maxLength": 128 },
+        "WhatsApp": { "type": "string", "maxLength": 32 },
+        "Senha": { "type": "string", "maxLength": 128 },
+        "Role": { "type": "string", "enum": ["Admin", "Cliente"] },
+        "Status_Plano": { "type": "string", "enum": ["Trial_3_Dias", "Ativo_Anual", "Expirado", "Bloqueado"] },
+        "Data_Cadastro": { "type": "string", "maxLength": 64 },
+        "Data_Expiracao": { "type": "string", "maxLength": 64 },
+        "Valor_Licenca": { "type": "number" },
+        "Data_Ultimo_Pagamento": { "type": "string", "maxLength": 64 },
+        "OpenRouter_ApiKey": { "type": "string", "maxLength": 256 },
+        "OpenRouter_Model": { "type": "string", "maxLength": 128 },
+        "Apify_Token": { "type": "string", "maxLength": 256 }
+      },
+      "required": ["ID_Usuario", "Nome", "Email", "Role", "Status_Plano", "Data_Cadastro", "Data_Expiracao"]
+    },
+    "SavedPrompt": {
+      "title": "SavedPrompt",
+      "description": "Prompts estruturados salvos gerados pelo assistente Google Veo 3.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 128 },
+        "objective": { "type": "string", "maxLength": 64 },
+        "niche": { "type": "string", "maxLength": 64 },
+        "productName": { "type": "string", "maxLength": 128 },
+        "scriptPtBr": { "type": "string", "maxLength": 2000 },
+        "promptJson": { "type": "string", "maxLength": 10000 },
+        "ownerId": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["title", "ownerId", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/Usuarios_Licencas/{licenseId}": {
+      "schema": { "$ref": "#/entities/UsuarioLicenca" },
+      "description": "Base central de licenças comerciais, usuários em trial e assinantes do Clip27 IA."
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Armazena dados do perfil do usuário autenticado."
+    },
+    "/users/{userId}/projects/{projectId}": {
+      "schema": { "$ref": "#/entities/Project" },
+      "description": "Projetos e matrizes 3x3x3 pertencentes ao usuário."
+    },
+    "/users/{userId}/savedPrompts/{promptId}": {
+      "schema": { "$ref": "#/entities/SavedPrompt" },
+      "description": "Prompts do Google Veo 3 salvos pelo usuário."
+    }
+  }
+}

@@ -1,0 +1,6 @@
+# Robots.txt for Clip27 IA
+User-agent: *
+Allow: /
+Disallow: /api/
+
+Sitemap: /sitemap.xml

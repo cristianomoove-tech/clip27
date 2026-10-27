@@ -1,0 +1,1237 @@
+import React, { useState, useRef, useEffect } from 'react';
+import {
+  Upload,
+  Trash2,
+  Sparkles,
+  Play,
+  Layers,
+  RefreshCw,
+  CheckCircle2,
+  Film,
+  FolderArchive,
+  Clock,
+  X,
+  Copy,
+  Check,
+  Image as ImageIcon,
+  FileText,
+  Zap,
+} from 'lucide-react';
+import { VideoClip, CreativeVariation, Project } from '../types';
+import { DEMO_HOOKS, DEMO_BODIES, DEMO_CTAS } from '../services/demoClips';
+import {
+  extractVideoFirstFrameAndDuration,
+  getClipFirstFrameDataUrl,
+  getClipBlobUrl,
+  registerClipBlob,
+  compileCartesianMatrix,
+  isDemoClip,
+} from '../services/clipStore';
+import { renderHighImpactCoverToPngBlob } from '../services/videoRenderer';
+import { clearAudioBufferCache } from '../services/audioManager';
+import { BatchDownloadModal } from './BatchDownloadModal';
+
+interface StudioViewProps {
+  project: Project;
+  onUpdateProject: (updated: Partial<Project>) => void;
+  onOpenPlayer: (variation: CreativeVariation) => void;
+  onSaveToFirebase?: (project: Project) => Promise<void>;
+}
+
+export const StudioView: React.FC<StudioViewProps> = ({
+  project,
+  onUpdateProject,
+  onOpenPlayer,
+  onSaveToFirebase,
+}) => {
+  const [isGeneratingMatrix, setIsGeneratingMatrix] = useState(false);
+  const [isZipModalOpen, setIsZipModalOpen] = useState(false);
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null);
+  const [productKeywordInput, setProductKeywordInput] = useState<string>(
+    project.productKeyword || ''
+  );
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [downloadingCoverId, setDownloadingCoverId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setProductKeywordInput(project.productKeyword || '');
+  }, [project.id, project.productKeyword]);
+
+  const handleCopyText = (text: string, keyId: string, label: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedId(keyId);
+    showNotice(`${label} copiado para a área de transferência!`);
+    setTimeout(() => {
+      setCopiedId((prev) => (prev === keyId ? null : prev));
+    }, 2500);
+  };
+
+  const handleDownloadCoverPng = async (
+    e: React.MouseEvent,
+    variation: CreativeVariation
+  ) => {
+    e.stopPropagation();
+    if (downloadingCoverId) return;
+    setDownloadingCoverId(variation.id);
+    try {
+      const blob = await renderHighImpactCoverToPngBlob(variation);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `CAPA_${variation.code.replace(/\+/g, '-')}_ALTO_IMPACTO.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showNotice(`Capa 9:16 de Alto Impacto (${variation.code}) baixada com sucesso!`);
+    } catch (err) {
+      console.error('Erro ao baixar capa PNG:', err);
+    } finally {
+      setDownloadingCoverId(null);
+    }
+  };
+
+  const handleCopyAll27SeoPack = () => {
+    if (!project.generatedVariations.length) return;
+    const textPack = project.generatedVariations
+      .map(
+        (v) =>
+          `=========================================\n` +
+          `VÍDEO ${v.index}/27 — COMBINAÇÃO: ${v.code}\n` +
+          `=========================================\n` +
+          `🔥 TÍTULO DA CAPA (ALTO IMPACTO):\n${v.coverTitle || v.headline}\n\n` +
+          `📝 LEGENDA SEO PARA DESCRIÇÃO DO TIKTOK:\n${v.seoCaption}\n`
+      )
+      .join('\n');
+
+    handleCopyText(
+      textPack,
+      'copy-all-27-seo',
+      'Pacote completo com as 27 Capas + 27 Legendas SEO'
+    );
+  };
+
+  // Auto-save with 2-second (2000ms) debounce on any editor change
+  const AUTOSAVE_DEBOUNCE_MS = 2000;
+  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'pending'>('saved');
+  const [lastSavedAt, setLastSavedAt] = useState<string>(new Date().toLocaleTimeString('pt-BR'));
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestProjectRef = useRef<Project>(project);
+  const pendingProjectRef = useRef<Project | null>(null);
+  const onSaveToFirebaseRef = useRef(onSaveToFirebase);
+  latestProjectRef.current = project;
+  onSaveToFirebaseRef.current = onSaveToFirebase;
+
+  // Flush any pending debounced auto-save when switching projects or unmounting StudioView
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+      if (pendingProjectRef.current && onSaveToFirebaseRef.current) {
+        const projToFlush = pendingProjectRef.current;
+        pendingProjectRef.current = null;
+        onSaveToFirebaseRef.current(projToFlush).catch((e) =>
+          console.warn('Erro ao persistir auto-salvamento pendente:', e)
+        );
+      }
+    };
+  }, [project.id]);
+
+  const executeSaveToFirebase = async (currentProj: Project) => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+    pendingProjectRef.current = null;
+
+    setSaveStatus('saving');
+    try {
+      if (onSaveToFirebaseRef.current) {
+        await onSaveToFirebaseRef.current(currentProj);
+      }
+      setSaveStatus('saved');
+      setLastSavedAt(new Date().toLocaleTimeString('pt-BR'));
+    } catch (e) {
+      console.warn('Erro no auto-salvamento do projeto:', e);
+      setSaveStatus('saved');
+    }
+  };
+
+  const scheduleAutosave = (currentProj: Project) => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+
+    pendingProjectRef.current = currentProj;
+    setSaveStatus('pending');
+
+    debounceTimerRef.current = setTimeout(() => {
+      executeSaveToFirebase(currentProj);
+    }, AUTOSAVE_DEBOUNCE_MS);
+  };
+
+  const updateProjectWithSave = (updated: Partial<Project>) => {
+    const merged: Project = { ...latestProjectRef.current, ...updated };
+    latestProjectRef.current = merged;
+    onUpdateProject(updated);
+    scheduleAutosave(merged);
+  };
+
+  const handleProductKeywordChange = (value: string) => {
+    setProductKeywordInput(value);
+    const trimmed = value.trim();
+    const currentProj = latestProjectRef.current;
+
+    if (
+      currentProj.generatedVariations.length > 0 &&
+      currentProj.hooks.length > 0 &&
+      currentProj.bodies.length > 0 &&
+      currentProj.ctas.length > 0
+    ) {
+      const updatedVariations = compileCartesianMatrix(
+        currentProj.hooks,
+        currentProj.bodies,
+        currentProj.ctas,
+        [],
+        currentProj.id,
+        true,
+        'minimal_clean',
+        {
+          productKeyword: trimmed,
+          projectName: currentProj.name,
+        }
+      );
+      updateProjectWithSave({
+        productKeyword: trimmed,
+        generatedVariations: updatedVariations,
+        videosGenerated: updatedVariations.length,
+      });
+    } else {
+      updateProjectWithSave({
+        productKeyword: trimmed,
+      });
+    }
+  };
+
+  // File input refs for the 3 columns
+  const hookInputRef = useRef<HTMLInputElement>(null);
+  const bodyInputRef = useRef<HTMLInputElement>(null);
+  const ctaInputRef = useRef<HTMLInputElement>(null);
+
+  const showNotice = (msg: string) => {
+    setUploadNotice(msg);
+    setTimeout(() => setUploadNotice(null), 5000);
+  };
+
+  // Automatically backfill first-frame thumbnail for any loaded Hook clip that has a video URL but no thumbnailDataUrl yet
+  useEffect(() => {
+    let cancelled = false;
+    const backfillHookThumbnails = async () => {
+      let updatedAny = false;
+      const nextHooks = await Promise.all(
+        (project.hooks || []).map(async (clip) => {
+          const existingThumb = getClipFirstFrameDataUrl(clip);
+          if (existingThumb) {
+            if (!clip.thumbnailDataUrl) {
+              updatedAny = true;
+              return { ...clip, thumbnailDataUrl: existingThumb };
+            }
+            return clip;
+          }
+          const url = clip.fileUrl || getClipBlobUrl(clip.id) || getClipBlobUrl(clip.fileName);
+          if (!url) return clip;
+          const res = await extractVideoFirstFrameAndDuration(url, clip.duration || 4.0);
+          if (res.thumbnailDataUrl && !cancelled) {
+            updatedAny = true;
+            try {
+              localStorage.setItem(`clip27_thumb_${clip.id}`, res.thumbnailDataUrl);
+              if (clip.fileName) {
+                localStorage.setItem(
+                  `clip27_thumb_${clip.fileName.toLowerCase()}`,
+                  res.thumbnailDataUrl
+                );
+              }
+            } catch {}
+            return { ...clip, thumbnailDataUrl: res.thumbnailDataUrl };
+          }
+          return clip;
+        })
+      );
+
+      if (updatedAny && !cancelled) {
+        const nextVars = (project.generatedVariations || []).map((v) => {
+          const matchedHook = nextHooks[v.hookIndex - 1] || v.hookClip;
+          return {
+            ...v,
+            hookClip: matchedHook,
+          };
+        });
+        updateProjectWithSave({
+          hooks: nextHooks,
+          generatedVariations: nextVars,
+        });
+      }
+    };
+
+    backfillHookThumbnails();
+    return () => {
+      cancelled = true;
+    };
+  }, [project.hooks]);
+
+  // Handle file additions for Hooks, Bodies, and CTAs
+  const handleAddFiles = async (
+    files: FileList | null,
+    type: 'hook' | 'body' | 'cta',
+    forceReplace: boolean = false
+  ) => {
+    if (!files || files.length === 0) return;
+
+    const newClips: VideoClip[] = [];
+    const defaultDur = type === 'hook' ? 4.0 : type === 'body' ? 7.0 : 3.5;
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const url = URL.createObjectURL(file);
+      const sizeMb = (file.size / (1024 * 1024)).toFixed(1) + ' MB';
+      const label = type === 'hook' ? 'Gancho' : type === 'body' ? 'Corpo' : 'CTA';
+      const clipId = `user-${type}-${Date.now()}-${i}`;
+
+      const { duration: detectedDuration, thumbnailDataUrl } =
+        await extractVideoFirstFrameAndDuration(url, defaultDur);
+      registerClipBlob(clipId, file, url, detectedDuration, thumbnailDataUrl);
+
+      newClips.push({
+        id: clipId,
+        type,
+        title: `${label}: ${file.name.slice(0, 24)}`,
+        duration: detectedDuration,
+        fileUrl: url,
+        fileName: file.name,
+        fileSize: sizeMb,
+        thumbnailDataUrl,
+        colorTheme: type === 'hook' ? '#9333ea' : type === 'body' ? '#2563eb' : '#16a34a',
+      });
+    }
+
+    clearAudioBufferCache();
+
+    let updatedHooks = project.hooks;
+    let updatedBodies = project.bodies;
+    let updatedCtas = project.ctas;
+
+    if (type === 'hook') {
+      const hasDemos = project.hooks.some(isDemoClip);
+      const replaceAll = hasDemos || forceReplace || newClips.length >= 3;
+      const nonDemos = project.hooks.filter((c) => !isDemoClip(c));
+      updatedHooks = replaceAll ? newClips : [...nonDemos, ...newClips];
+      updatedHooks = updatedHooks.slice(0, 3);
+    } else if (type === 'body') {
+      const hasDemos = project.bodies.some(isDemoClip);
+      const replaceAll = hasDemos || forceReplace || newClips.length >= 3;
+      const nonDemos = project.bodies.filter((c) => !isDemoClip(c));
+      updatedBodies = replaceAll ? newClips : [...nonDemos, ...newClips];
+      updatedBodies = updatedBodies.slice(0, 3);
+    } else {
+      const hasDemos = project.ctas.some(isDemoClip);
+      const replaceAll = hasDemos || forceReplace || newClips.length >= 3;
+      const nonDemos = project.ctas.filter((c) => !isDemoClip(c));
+      updatedCtas = replaceAll ? newClips : [...nonDemos, ...newClips];
+      updatedCtas = updatedCtas.slice(0, 3);
+    }
+
+    let newVariations = project.generatedVariations;
+    if (updatedHooks.length > 0 && updatedBodies.length > 0 && updatedCtas.length > 0) {
+      newVariations = compileCartesianMatrix(
+        updatedHooks,
+        updatedBodies,
+        updatedCtas,
+        [],
+        project.id,
+        true,
+        'minimal_clean',
+        {
+          productKeyword: productKeywordInput.trim() || project.productKeyword,
+          projectName: project.name,
+        }
+      );
+    }
+
+    updateProjectWithSave({
+      hooks: updatedHooks,
+      bodies: updatedBodies,
+      ctas: updatedCtas,
+      clipsCount: updatedHooks.length + updatedBodies.length + updatedCtas.length,
+      generatedVariations: newVariations,
+      videosGenerated: newVariations.length,
+    });
+
+    const typeName = type === 'hook' ? 'Ganchos' : type === 'body' ? 'Corpos' : 'CTAs';
+    showNotice(`${newClips.length} arquivo(s) de ${typeName} carregado(s) com sucesso!`);
+  };
+
+  const handleRemoveClip = (type: 'hook' | 'body' | 'cta', id: string) => {
+    clearAudioBufferCache();
+    let updatedHooks = project.hooks;
+    let updatedBodies = project.bodies;
+    let updatedCtas = project.ctas;
+
+    if (type === 'hook') {
+      updatedHooks = project.hooks.filter((c) => c.id !== id);
+    } else if (type === 'body') {
+      updatedBodies = project.bodies.filter((c) => c.id !== id);
+    } else {
+      updatedCtas = project.ctas.filter((c) => c.id !== id);
+    }
+
+    const newVariations =
+      updatedHooks.length > 0 && updatedBodies.length > 0 && updatedCtas.length > 0
+        ? compileCartesianMatrix(
+            updatedHooks,
+            updatedBodies,
+            updatedCtas,
+            [],
+            project.id,
+            true,
+            'minimal_clean',
+            {
+              productKeyword: productKeywordInput.trim() || project.productKeyword,
+              projectName: project.name,
+            }
+          )
+        : [];
+
+    updateProjectWithSave({
+      hooks: updatedHooks,
+      bodies: updatedBodies,
+      ctas: updatedCtas,
+      clipsCount: updatedHooks.length + updatedBodies.length + updatedCtas.length,
+      generatedVariations: newVariations,
+      videosGenerated: newVariations.length,
+    });
+    showNotice('Clipe removido com sucesso.');
+  };
+
+  const handleRemoveVariation = (variationId: string) => {
+    const updatedVars = project.generatedVariations.filter((v) => v.id !== variationId);
+    updateProjectWithSave({
+      generatedVariations: updatedVars,
+      videosGenerated: updatedVars.length,
+    });
+    showNotice('Variação excluída com sucesso.');
+  };
+
+  const handleClearVariations = () => {
+    updateProjectWithSave({
+      generatedVariations: [],
+      videosGenerated: 0,
+    });
+    showNotice('Todas as variações foram excluídas.');
+  };
+
+  const handleClearColumn = (type: 'hook' | 'body' | 'cta') => {
+    const updatedHooks = type === 'hook' ? [] : project.hooks;
+    const updatedBodies = type === 'body' ? [] : project.bodies;
+    const updatedCtas = type === 'cta' ? [] : project.ctas;
+
+    const newVariations =
+      updatedHooks.length > 0 && updatedBodies.length > 0 && updatedCtas.length > 0
+        ? compileCartesianMatrix(
+            updatedHooks,
+            updatedBodies,
+            updatedCtas,
+            [],
+            project.id,
+            true,
+            'minimal_clean',
+            {
+              productKeyword: productKeywordInput.trim() || project.productKeyword,
+              projectName: project.name,
+            }
+          )
+        : [];
+
+    updateProjectWithSave({
+      hooks: updatedHooks,
+      bodies: updatedBodies,
+      ctas: updatedCtas,
+      clipsCount: updatedHooks.length + updatedBodies.length + updatedCtas.length,
+      generatedVariations: newVariations,
+      videosGenerated: newVariations.length,
+    });
+  };
+
+  const handleLoadDemoClips = () => {
+    const demoVars = compileCartesianMatrix(
+      DEMO_HOOKS,
+      DEMO_BODIES,
+      DEMO_CTAS,
+      [],
+      project.id,
+      true,
+      'minimal_clean',
+      {
+        productKeyword: productKeywordInput.trim() || project.productKeyword,
+        projectName: project.name,
+      }
+    );
+
+    updateProjectWithSave({
+      hooks: [...DEMO_HOOKS],
+      bodies: [...DEMO_BODIES],
+      ctas: [...DEMO_CTAS],
+      clipsCount: 9,
+      generatedVariations: demoVars,
+      videosGenerated: demoVars.length,
+    });
+    showNotice('Clipes de demonstração + 27 Capas e Legendas SEO carregados com sucesso!');
+  };
+
+  const handleClearAllClips = () => {
+    updateProjectWithSave({
+      hooks: [],
+      bodies: [],
+      ctas: [],
+      clipsCount: 0,
+      generatedVariations: [],
+      videosGenerated: 0,
+    });
+    showNotice('Todos os clipes foram removidos.');
+  };
+
+  // Cartesian 3x3x3 matrix calculation
+  const totalPossible = project.hooks.length * project.bodies.length * project.ctas.length;
+
+  const handleGenerateVariations = () => {
+    if (totalPossible === 0) return;
+    setIsGeneratingMatrix(true);
+
+    setTimeout(() => {
+      const variations = compileCartesianMatrix(
+        project.hooks,
+        project.bodies,
+        project.ctas,
+        [],
+        project.id,
+        true,
+        'minimal_clean',
+        {
+          productKeyword: productKeywordInput.trim(),
+          projectName: project.name,
+        }
+      );
+
+      updateProjectWithSave({
+        productKeyword: productKeywordInput.trim(),
+        generatedVariations: variations,
+        videosGenerated: variations.length,
+      });
+      setIsGeneratingMatrix(false);
+      showNotice(
+        `${variations.length} vídeos únicos + 27 Capas de Alto Impacto + 27 Legendas SEO gerados!`
+      );
+    }, 300);
+  };
+
+  return (
+    <div id="tab-estudio" className="space-y-8 animate-fade-in pb-12">
+      {/* Top Header of Studio with Autosave Status */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-purple-500/15">
+        <div>
+          <div className="flex items-center gap-2 mb-1 text-xs text-fuchsia-400 font-semibold tracking-wider uppercase">
+            <span>Método 3x3x3</span>
+            <span>·</span>
+            <span>Matriz Combinatória Viral</span>
+          </div>
+          <h2 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight flex items-center gap-3">
+            <span>Estúdio Combinatório de Criativos</span>
+            <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+              {project.id}
+            </span>
+          </h2>
+          <div className="flex flex-wrap items-center gap-3 mt-1">
+            <p className="text-sm text-slate-400">
+              Carregue 3 Ganchos, 3 Corpos e 3 CTAs para gerar 27 vídeos únicos + Capa de Alto Impacto + Legenda SEO TikTok.
+            </p>
+
+            {/* Auto-save Indicator (2s Debounce) */}
+            <div className="flex items-center gap-2">
+              {saveStatus === 'saving' ? (
+                <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 text-[11px] font-mono animate-pulse">
+                  <RefreshCw className="w-3 h-3 animate-spin text-fuchsia-400" />
+                  <span>Auto-salvando alterações...</span>
+                </span>
+              ) : saveStatus === 'pending' ? (
+                <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[11px] font-mono">
+                  <Clock className="w-3 h-3 text-amber-400" />
+                  <span>Auto-salvando em 2s...</span>
+                </span>
+              ) : (
+                <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[11px] font-mono">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                  <span>Salvo automaticamente ({lastSavedAt})</span>
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Action Buttons in Header */}
+        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+          {project.generatedVariations.length > 0 && (
+            <button
+              onClick={() => setIsZipModalOpen(true)}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black text-white bg-gradient-to-r from-purple-600 via-fuchsia-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 border border-fuchsia-400/50 shadow-[0_0_20px_rgba(217,70,239,0.4)] transition-all transform hover:scale-[1.02] cursor-pointer"
+            >
+              <FolderArchive className="w-4 h-4 text-fuchsia-200" />
+              <span>Baixar Vídeos + Capas (.ZIP)</span>
+              <span className="px-1.5 py-0.5 rounded-full bg-emerald-500/30 text-[10px] font-mono text-emerald-300 font-bold">
+                MP4 + PNG
+              </span>
+              <span className="px-1.5 py-0.5 rounded-full bg-black/40 text-[10px] font-mono">
+                {project.generatedVariations.length}
+              </span>
+            </button>
+          )}
+
+          <button
+            onClick={handleLoadDemoClips}
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold text-fuchsia-200 bg-fuchsia-950/40 hover:bg-fuchsia-900/50 border border-fuchsia-500/40 shadow-[0_0_15px_rgba(217,70,239,0.2)] transition-all cursor-pointer"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-fuchsia-400" />
+            <span>Carregar Clipes Demo (1-Clique)</span>
+          </button>
+          {project.clipsCount > 0 && (
+            <button
+              onClick={handleClearAllClips}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium text-slate-400 hover:text-rose-300 hover:bg-rose-950/30 border border-purple-500/20 transition-all cursor-pointer"
+              title="Limpar todos os clipes"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Limpar</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Upload Notification Toast */}
+      {uploadNotice && (
+        <div className="p-3.5 rounded-2xl bg-fuchsia-950/70 border border-fuchsia-500/40 text-fuchsia-200 text-xs flex items-center justify-between gap-3 shadow-[0_0_20px_rgba(217,70,239,0.25)] animate-fade-in">
+          <div className="flex items-center gap-2.5">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span className="font-semibold">{uploadNotice}</span>
+          </div>
+          <button onClick={() => setUploadNotice(null)} className="text-slate-400 hover:text-white p-1">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* 3 Colunas de Upload (Ganchos, Corpos, CTAs) */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {/* Coluna 1: Ganchos (Hooks) */}
+        <div className="glass-card rounded-2xl p-4 flex flex-col justify-between border-t-2 border-t-purple-500">
+          <div>
+            <div className="flex items-center justify-between pb-3 border-b border-purple-500/15 mb-3">
+              <div className="flex items-center gap-2">
+                <span className="w-6 h-6 rounded-lg bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-xs font-bold text-purple-300 font-mono">
+                  1
+                </span>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Coluna 1: Ganchos (Hooks)</h3>
+                  <p className="text-[11px] text-slate-400">Primeiros 3 a 5 segundos de choque</p>
+                </div>
+              </div>
+              <span className="text-xs font-mono font-bold text-purple-400 px-2 py-0.5 rounded bg-purple-500/15">
+                {project.hooks.length}/3
+              </span>
+            </div>
+
+            {/* List of Loaded Hook Clips */}
+            <div className="space-y-2.5 mb-3 min-h-[160px]">
+              {project.hooks.length === 0 ? (
+                <div className="h-40 border-2 border-dashed border-purple-500/20 rounded-xl flex flex-col items-center justify-center p-4 text-center">
+                  <Film className="w-7 h-7 text-purple-400/50 mb-2" />
+                  <p className="text-xs text-slate-400 font-medium">Nenhum gancho carregado</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">Arraste ou selecione até 3 vídeos</p>
+                </div>
+              ) : (
+                project.hooks.map((clip, idx) => (
+                  <div
+                    key={clip.id}
+                    className="p-2.5 rounded-xl bg-slate-950/70 border border-purple-500/25 hover:border-purple-500/45 transition-colors"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="w-5 h-5 rounded bg-purple-500/20 text-purple-300 text-[10px] font-mono font-bold flex items-center justify-center shrink-0">
+                          G{idx + 1}
+                        </span>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <p className="text-xs font-bold text-slate-200 truncate" title={clip.fileName || clip.title}>
+                              {clip.fileName || clip.title}
+                            </p>
+                            {!isDemoClip(clip) ? (
+                              <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
+                                VÍDEO REAL
+                              </span>
+                            ) : (
+                              <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">
+                                DEMO
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-slate-400 font-mono">
+                            {clip.duration}s · {clip.fileSize || '3.8 MB'}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleRemoveClip('hook', clip.id)}
+                        className="p-1 rounded text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 transition-colors cursor-pointer shrink-0"
+                        title="Remover clipe"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          {/* Upload Button */}
+          <div className="space-y-2">
+            <input
+              type="file"
+              ref={hookInputRef}
+              multiple
+              accept="video/mp4,video/quicktime,video/webm"
+              className="hidden"
+              onChange={(e) => handleAddFiles(e.target.files, 'hook')}
+            />
+            <button
+              onClick={() => hookInputRef.current?.click()}
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-purple-500/30 hover:border-purple-500/60 bg-purple-950/20 hover:bg-purple-900/30 text-xs font-semibold text-purple-300 transition-all cursor-pointer"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              <span>Adicionar Ganchos (.mp4, .mov)</span>
+            </button>
+            {project.hooks.length > 0 && (
+              <button
+                onClick={() => handleClearColumn('hook')}
+                className="w-full py-1 text-[11px] text-slate-400 hover:text-rose-400 text-center transition-colors cursor-pointer"
+              >
+                Limpar esta coluna
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Coluna 2: Corpos (Bodies) */}
+        <div className="glass-card rounded-2xl p-4 flex flex-col justify-between border-t-2 border-t-blue-500">
+          <div>
+            <div className="flex items-center justify-between pb-3 border-b border-purple-500/15 mb-3">
+              <div className="flex items-center gap-2">
+                <span className="w-6 h-6 rounded-lg bg-blue-500/20 border border-blue-500/40 flex items-center justify-center text-xs font-bold text-blue-300 font-mono">
+                  2
+                </span>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Coluna 2: Corpos (Bodies)</h3>
+                  <p className="text-[11px] text-slate-400">Demonstração do produto / retenção</p>
+                </div>
+              </div>
+              <span className="text-xs font-mono font-bold text-blue-400 px-2 py-0.5 rounded bg-blue-500/15">
+                {project.bodies.length}/3
+              </span>
+            </div>
+
+            {/* List of Loaded Body Clips */}
+            <div className="space-y-2.5 mb-3 min-h-[160px]">
+              {project.bodies.length === 0 ? (
+                <div className="h-40 border-2 border-dashed border-blue-500/20 rounded-xl flex flex-col items-center justify-center p-4 text-center">
+                  <Film className="w-7 h-7 text-blue-400/50 mb-2" />
+                  <p className="text-xs text-slate-400 font-medium">Nenhum corpo carregado</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">Arraste ou selecione até 3 vídeos</p>
+                </div>
+              ) : (
+                project.bodies.map((clip, idx) => (
+                  <div
+                    key={clip.id}
+                    className="p-2.5 rounded-xl bg-slate-950/70 border border-blue-500/25 hover:border-blue-500/45 transition-colors"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="w-5 h-5 rounded bg-blue-500/20 text-blue-300 text-[10px] font-mono font-bold flex items-center justify-center shrink-0">
+                          C{idx + 1}
+                        </span>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <p className="text-xs font-bold text-slate-200 truncate" title={clip.fileName || clip.title}>
+                              {clip.fileName || clip.title}
+                            </p>
+                            {!isDemoClip(clip) ? (
+                              <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
+                                VÍDEO REAL
+                              </span>
+                            ) : (
+                              <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">
+                                DEMO
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-slate-400 font-mono">
+                            {clip.duration}s · {clip.fileSize || '6.8 MB'}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleRemoveClip('body', clip.id)}
+                        className="p-1 rounded text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 transition-colors cursor-pointer shrink-0"
+                        title="Remover clipe"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          {/* Upload Button */}
+          <div className="space-y-2">
+            <input
+              type="file"
+              ref={bodyInputRef}
+              multiple
+              accept="video/mp4,video/quicktime,video/webm"
+              className="hidden"
+              onChange={(e) => handleAddFiles(e.target.files, 'body')}
+            />
+            <button
+              onClick={() => bodyInputRef.current?.click()}
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-blue-500/30 hover:border-blue-500/60 bg-blue-950/20 hover:bg-blue-900/30 text-xs font-semibold text-blue-300 transition-all cursor-pointer"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              <span>Adicionar Corpos (.mp4, .mov)</span>
+            </button>
+            {project.bodies.length > 0 && (
+              <button
+                onClick={() => handleClearColumn('body')}
+                className="w-full py-1 text-[11px] text-slate-400 hover:text-rose-400 text-center transition-colors cursor-pointer"
+              >
+                Limpar esta coluna
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Coluna 3: CTAs */}
+        <div className="glass-card rounded-2xl p-4 flex flex-col justify-between border-t-2 border-t-emerald-500">
+          <div>
+            <div className="flex items-center justify-between pb-3 border-b border-purple-500/15 mb-3">
+              <div className="flex items-center gap-2">
+                <span className="w-6 h-6 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-xs font-bold text-emerald-300 font-mono">
+                  3
+                </span>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Coluna 3: CTAs (Chamada)</h3>
+                  <p className="text-[11px] text-slate-400">Conversão final para o carrinho</p>
+                </div>
+              </div>
+              <span className="text-xs font-mono font-bold text-emerald-400 px-2 py-0.5 rounded bg-emerald-500/15">
+                {project.ctas.length}/3
+              </span>
+            </div>
+
+            {/* List of Loaded CTA Clips */}
+            <div className="space-y-2.5 mb-3 min-h-[160px]">
+              {project.ctas.length === 0 ? (
+                <div className="h-40 border-2 border-dashed border-emerald-500/20 rounded-xl flex flex-col items-center justify-center p-4 text-center">
+                  <Film className="w-7 h-7 text-emerald-400/50 mb-2" />
+                  <p className="text-xs text-slate-400 font-medium">Nenhum CTA carregado</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">Arraste ou selecione até 3 vídeos</p>
+                </div>
+              ) : (
+                project.ctas.map((clip, idx) => (
+                  <div
+                    key={clip.id}
+                    className="p-2.5 rounded-xl bg-slate-950/70 border border-emerald-500/25 hover:border-emerald-500/45 transition-colors"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="w-5 h-5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-mono font-bold flex items-center justify-center shrink-0">
+                          CTA{idx + 1}
+                        </span>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <p className="text-xs font-bold text-slate-200 truncate" title={clip.fileName || clip.title}>
+                              {clip.fileName || clip.title}
+                            </p>
+                            {!isDemoClip(clip) ? (
+                              <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
+                                VÍDEO REAL
+                              </span>
+                            ) : (
+                              <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">
+                                DEMO
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-slate-400 font-mono">
+                            {clip.duration}s · {clip.fileSize || '3.4 MB'}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleRemoveClip('cta', clip.id)}
+                        className="p-1 rounded text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 transition-colors cursor-pointer shrink-0"
+                        title="Remover clipe"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          {/* Upload Button */}
+          <div className="space-y-2">
+            <input
+              type="file"
+              ref={ctaInputRef}
+              multiple
+              accept="video/mp4,video/quicktime,video/webm"
+              className="hidden"
+              onChange={(e) => handleAddFiles(e.target.files, 'cta')}
+            />
+            <button
+              onClick={() => ctaInputRef.current?.click()}
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-emerald-500/30 hover:border-emerald-500/60 bg-emerald-950/20 hover:bg-emerald-900/30 text-xs font-semibold text-emerald-300 transition-all cursor-pointer"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              <span>Adicionar CTAs (.mp4, .mov)</span>
+            </button>
+            {project.ctas.length > 0 && (
+              <button
+                onClick={() => handleClearColumn('cta')}
+                className="w-full py-1 text-[11px] text-slate-400 hover:text-rose-400 text-center transition-colors cursor-pointer"
+              >
+                Limpar esta coluna
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Barra de Ação Limpa: Matemática atual + Nome do Produto p/ SEO + Botão Gerar 27 Vídeos Combinados */}
+      <div className="glass-card rounded-2xl p-4 sm:p-6 border border-fuchsia-500/30 bg-gradient-to-r from-purple-950/40 via-slate-900/80 to-fuchsia-950/30 space-y-4">
+        <div className="flex flex-col lg:flex-row items-center justify-between gap-5">
+          <div className="space-y-1.5 text-center lg:text-left w-full lg:w-auto">
+            <p className="text-sm sm:text-base font-extrabold text-white">
+              Matemática atual:{' '}
+              <span className="text-purple-400 font-mono">{project.hooks.length} Ganchos</span> ×{' '}
+              <span className="text-blue-400 font-mono">{project.bodies.length} Corpos</span> ×{' '}
+              <span className="text-emerald-400 font-mono">{project.ctas.length} CTAs</span> ={' '}
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-purple-400 via-fuchsia-300 to-pink-400 font-black font-mono">
+                {totalPossible} vídeos únicos
+              </span>
+            </p>
+            <p className="text-xs text-slate-300">
+              Ao gerar os 27 vídeos, o motor cria automaticamente <strong className="text-amber-300">27 Capas com Título de Alto Impacto</strong> e <strong className="text-emerald-300">27 Legendas SEO prontas para o TikTok</strong>.
+            </p>
+          </div>
+
+          {/* Input opcional do nome do produto para personalizar Capas & Legendas SEO */}
+          <div className="w-full lg:w-80 shrink-0">
+            <label className="block text-[10px] font-mono uppercase tracking-wider text-fuchsia-300 font-bold mb-1">
+              Produto p/ Legenda SEO &amp; Capa (Opcional):
+            </label>
+            <input
+              type="text"
+              value={productKeywordInput}
+              onChange={(e) => handleProductKeywordChange(e.target.value)}
+              placeholder="Ex: Escova Alisadora 5 em 1, Mini Processador..."
+              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/90 border border-purple-500/35 focus:border-fuchsia-400 text-xs text-white placeholder-slate-500 outline-none transition-all"
+            />
+          </div>
+
+          <div className="shrink-0 w-full lg:w-auto">
+            <button
+              onClick={handleGenerateVariations}
+              disabled={totalPossible === 0 || isGeneratingMatrix}
+              className="w-full lg:w-auto min-h-[48px] flex items-center justify-center gap-3 px-6 sm:px-8 py-3.5 sm:py-4 rounded-2xl font-black text-sm text-white bg-gradient-to-r from-purple-600 via-fuchsia-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 shadow-[0_0_30px_rgba(217,70,239,0.45)] transition-all transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
+            >
+              {isGeneratingMatrix ? (
+                <>
+                  <RefreshCw className="w-5 h-5 animate-spin" />
+                  <span>Combinando Vídeos + SEO...</span>
+                </>
+              ) : (
+                <>
+                  <Layers className="w-5 h-5" />
+                  <span>Gerar 27 Vídeos Combinados</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Grade de 27 Vídeos Gerados + Capas de Alto Impacto + Legendas SEO TikTok */}
+      {project.generatedVariations.length > 0 && (
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-purple-500/15">
+            <div>
+              <h3 className="text-lg font-extrabold text-white flex flex-wrap items-center gap-2">
+                <span>Variações Combinadas + Capas &amp; Legendas SEO TikTok</span>
+                <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                  {project.generatedVariations.length} VÍDEOS ÚNICOS
+                </span>
+              </h3>
+              <p className="text-xs text-slate-400">
+                Cada vídeo possui sua <strong className="text-amber-300">Capa com Título de Alto Impacto</strong> e <strong className="text-emerald-300">Legenda SEO pronta para copiar e colar na descrição do TikTok</strong>. O arquivo MP4 permanece 100% limpo.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2.5">
+              <button
+                onClick={handleCopyAll27SeoPack}
+                className="w-full sm:w-auto min-h-[44px] flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs text-amber-200 bg-amber-950/40 hover:bg-amber-900/50 border border-amber-500/40 transition-all cursor-pointer"
+                title="Copiar todas as 27 Capas e 27 Legendas SEO de uma vez"
+              >
+                {copiedId === 'copy-all-27-seo' ? (
+                  <>
+                    <Check className="w-4 h-4 text-emerald-400" />
+                    <span className="text-emerald-300">27 Capas + Legendas Copiadas!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-4 h-4 text-amber-400" />
+                    <span>Copiar Todas as 27 Capas + Legendas SEO</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                onClick={() => setIsZipModalOpen(true)}
+                className="w-full sm:w-auto min-h-[44px] flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-black text-xs text-white bg-gradient-to-r from-purple-600 via-fuchsia-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 shadow-[0_0_20px_rgba(217,70,239,0.35)] transition-all transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+              >
+                <FolderArchive className="w-4 h-4 text-fuchsia-200" />
+                <span>Baixar Vídeos + Capas (.ZIP)</span>
+                <span className="px-1.5 py-0.5 rounded-full bg-black/40 text-[10px] font-mono">
+                  {project.generatedVariations.length}
+                </span>
+              </button>
+
+              <button
+                onClick={handleClearVariations}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium text-slate-400 hover:text-rose-300 hover:bg-rose-950/30 border border-purple-500/20 transition-all cursor-pointer"
+                title="Excluir todas as variações"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Excluir Todas</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {project.generatedVariations.map((v) => {
+              const coverTitle = v.coverTitle || v.headline || 'NÃO COMPRE ANTES DE VER ESSE TESTE!';
+              const coverBadge = (v.coverBadge || '🚨 ALERTA DE COMPRA').split('·')[0].trim();
+              const seoCaption = v.seoCaption || '';
+              const isCoverCopied = copiedId === `cover-${v.id}`;
+              const isSeoCopied = copiedId === `seo-${v.id}`;
+              const isDownloadingCover = downloadingCoverId === v.id;
+
+              return (
+                <div
+                  key={v.id}
+                  onClick={() => onOpenPlayer(v)}
+                  className="glass-card glass-card-hover rounded-2xl p-4 cursor-pointer transition-all duration-200 group relative flex flex-col justify-between border border-purple-500/25"
+                >
+                  <div>
+                    {/* Top Badge with Combination Code & Hash */}
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono text-xs font-black text-fuchsia-400 bg-fuchsia-950/50 px-2 py-0.5 rounded border border-fuchsia-500/30">
+                          {v.code}
+                        </span>
+                        <span className="text-[9px] font-mono font-bold text-emerald-400 bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-500/30">
+                          MP4 LIMPO
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-mono text-slate-400">
+                          {v.estimatedDuration}s · #{v.microEdit.hashHex}
+                        </span>
+                        <button
+                          title="Excluir Variação"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRemoveVariation(v.id);
+                          }}
+                          className="p-1 rounded text-slate-400 hover:text-rose-400 hover:bg-rose-950/40 transition-colors cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* BLOCO 1: CAPA DE ALTO IMPACTO (Visual Preview + Botão Copiar Título + Baixar Capa PNG) */}
+                    <div
+                      onClick={(e) => e.stopPropagation()}
+                      className="rounded-xl p-3 mb-3 bg-gradient-to-br from-slate-950 via-purple-950/60 to-rose-950/40 border-2 border-amber-400/50 shadow-[0_0_20px_rgba(250,204,21,0.12)] relative overflow-hidden"
+                    >
+                      <div className="flex items-center justify-between gap-2 mb-1.5">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-600 text-white text-[9px] font-black uppercase tracking-wider shadow">
+                          <Zap className="w-2.5 h-2.5 fill-current" />
+                          <span>CAPA ALTO IMPACTO · {coverBadge}</span>
+                        </span>
+                        <span className="text-[9px] font-mono text-amber-300 font-bold">
+                          9:16 THUMBNAIL
+                        </span>
+                      </div>
+
+                      <p className="text-xs sm:text-sm font-black text-amber-300 leading-snug tracking-tight uppercase drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] my-2">
+                        &ldquo;{coverTitle}&rdquo;
+                      </p>
+
+                      <div className="flex items-center gap-2 mt-2.5 pt-2 border-t border-amber-500/20">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleCopyText(coverTitle, `cover-${v.id}`, `Título da Capa (${v.code})`);
+                          }}
+                          className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-[11px] font-extrabold transition-all cursor-pointer ${
+                            isCoverCopied
+                              ? 'bg-emerald-500 text-slate-950 shadow-[0_0_12px_rgba(16,185,129,0.5)]'
+                              : 'bg-amber-400 hover:bg-amber-300 text-slate-950 shadow-sm'
+                          }`}
+                        >
+                          {isCoverCopied ? (
+                            <>
+                              <Check className="w-3.5 h-3.5 stroke-[3]" />
+                              <span>Título Copiado!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3.5 h-3.5" />
+                              <span>Copiar Título da Capa</span>
+                            </>
+                          )}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={(e) => handleDownloadCoverPng(e, v)}
+                          disabled={isDownloadingCover}
+                          title="Baixar imagem da Capa 9:16 (.PNG) pronta com esse título de alto impacto"
+                          className="flex items-center justify-center gap-1 py-1.5 px-2.5 rounded-lg text-[11px] font-bold bg-slate-900/90 hover:bg-slate-800 text-amber-200 border border-amber-400/40 transition-all cursor-pointer shrink-0 disabled:opacity-50"
+                        >
+                          {isDownloadingCover ? (
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-300" />
+                          ) : (
+                            <ImageIcon className="w-3.5 h-3.5 text-amber-300" />
+                          )}
+                          <span>Baixar Capa</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* BLOCO 2: LEGENDA SEO PARA TIKTOK (Pronta para copiar e colar na descrição) */}
+                    <div
+                      onClick={(e) => e.stopPropagation()}
+                      className="rounded-xl p-3 mb-3 bg-slate-950/85 border border-emerald-500/30 space-y-2"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold text-emerald-300 uppercase">
+                          <FileText className="w-3 h-3 text-emerald-400" />
+                          <span>Legenda SEO (Descrição TikTok)</span>
+                        </span>
+                        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                          SEO + HASHTAGS
+                        </span>
+                      </div>
+
+                      <div className="max-h-24 overflow-y-auto pr-1 text-[11px] text-slate-300 whitespace-pre-line leading-relaxed font-sans select-all bg-slate-900/70 p-2 rounded-lg border border-slate-800">
+                        {seoCaption}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCopyText(seoCaption, `seo-${v.id}`, `Legenda SEO TikTok (${v.code})`);
+                        }}
+                        className={`w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
+                          isSeoCopied
+                            ? 'bg-emerald-500 text-slate-950 shadow-[0_0_15px_rgba(16,185,129,0.5)]'
+                            : 'bg-emerald-600/90 hover:bg-emerald-500 text-white shadow-sm'
+                        }`}
+                      >
+                        {isSeoCopied ? (
+                          <>
+                            <Check className="w-3.5 h-3.5 stroke-[3]" />
+                            <span>Legenda SEO Copiada! (Só colar no TikTok)</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3.5 h-3.5" />
+                            <span>Copiar Legenda SEO p/ TikTok</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    {/* Exact Combined Clips Source Badges */}
+                    <div className="p-2 rounded-lg bg-slate-950/60 border border-purple-500/15 mb-3 space-y-1 text-[10px] font-mono">
+                      <div className="flex items-center gap-1.5 text-fuchsia-300 truncate" title={v.hookClip?.fileName || v.hookClip?.title}>
+                        <span className="text-slate-500 font-bold shrink-0">G{v.hookIndex}:</span>
+                        <span className="truncate">{v.hookClip?.fileName || v.hookClip?.title}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-sky-300 truncate" title={v.bodyClip?.fileName || v.bodyClip?.title}>
+                        <span className="text-slate-500 font-bold shrink-0">C{v.bodyIndex}:</span>
+                        <span className="truncate">{v.bodyClip?.fileName || v.bodyClip?.title}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-emerald-300 truncate" title={v.ctaClip?.fileName || v.ctaClip?.title}>
+                        <span className="text-slate-500 font-bold shrink-0">CTA{v.ctaIndex}:</span>
+                        <span className="truncate">{v.ctaClip?.fileName || v.ctaClip?.title}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Card Action Button */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenPlayer(v);
+                    }}
+                    className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-bold text-white bg-purple-600/80 group-hover:bg-gradient-to-r group-hover:from-purple-600 group-hover:to-pink-600 transition-all cursor-pointer shadow-sm"
+                  >
+                    <Play className="w-3.5 h-3.5 fill-white" />
+                    <span>Reproduzir / Baixar MP4 Limpo</span>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Batch Download ZIP Modal */}
+      <BatchDownloadModal
+        isOpen={isZipModalOpen}
+        onClose={() => setIsZipModalOpen(false)}
+        project={project}
+        variations={project.generatedVariations}
+      />
+    </div>
+  );
+};

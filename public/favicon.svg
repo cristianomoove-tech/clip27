@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="clip27-brand" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#9333ea" />
+      <stop offset="50%" stop-color="#c026d3" />
+      <stop offset="100%" stop-color="#db2777" />
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="3" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Background rounded squircle -->
+  <rect width="64" height="64" rx="16" fill="#090d16" />
+  <rect width="64" height="64" rx="16" stroke="url(#clip27-brand)" stroke-width="2" stroke-opacity="0.6" />
+
+  <!-- 3x3 Grid of rounded squares with varying subtle opacities -->
+  <!-- Row 1 -->
+  <rect x="12" y="12" width="10" height="10" rx="3" fill="url(#clip27-brand)" fill-opacity="0.85" />
+  <rect x="27" y="12" width="10" height="10" rx="3" fill="url(#clip27-brand)" fill-opacity="0.9" />
+  <rect x="42" y="12" width="10" height="10" rx="3" fill="url(#clip27-brand)" fill-opacity="0.85" />
+
+  <!-- Row 2 -->
+  <rect x="12" y="27" width="10" height="10" rx="3" fill="url(#clip27-brand)" fill-opacity="0.9" />
+  <!-- Center cell with dynamic Play cut-out -->
+  <rect x="27" y="27" width="10" height="10" rx="3" fill="url(#clip27-brand)" />
+  <rect x="42" y="27" width="10" height="10" rx="3" fill="url(#clip27-brand)" fill-opacity="0.9" />
+
+  <!-- Row 3 -->
+  <rect x="12" y="42" width="10" height="10" rx="3" fill="url(#clip27-brand)" fill-opacity="0.85" />
+  <rect x="27" y="42" width="10" height="10" rx="3" fill="url(#clip27-brand)" fill-opacity="0.9" />
+  <rect x="42" y="42" width="10" height="10" rx="3" fill="url(#clip27-brand)" fill-opacity="0.85" />
+
+  <!-- Prominent Central Play Triangle Icon with neon glow -->
+  <g filter="url(#glow)">
+    <path d="M26 23.5L43 32L26 40.5V23.5Z" fill="#ffffff" />
+  </g>
+</svg>

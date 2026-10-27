@@ -1,0 +1,18 @@
+{
+  "short_name": "Clip27 IA",
+  "name": "Clip27 IA — Multiplicador de Vídeos 3x3x3 e Criativos Virais",
+  "description": "Estúdio de multiplicação de criativos em massa com Método 3x3x3 para TikTok Shop e gerador de prompts Google Veo 3.",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "64x64 128x128 256x256 512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#05070c",
+  "theme_color": "#9333ea",
+  "display": "standalone",
+  "orientation": "portrait"
+}

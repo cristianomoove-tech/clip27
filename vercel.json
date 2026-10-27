@@ -1,0 +1,45 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "env": {
+    "VITE_FIREBASE_API_KEY": "AIzaSyCFIa5tsKoDkMMLRRWTSvOeoQcJ8nEDSMQ",
+    "VITE_FIREBASE_AUTH_DOMAIN": "image-ia-sdh87.firebaseapp.com",
+    "VITE_FIREBASE_PROJECT_ID": "image-ia-sdh87",
+    "VITE_FIREBASE_STORAGE_BUCKET": "image-ia-sdh87.firebasestorage.app",
+    "VITE_FIREBASE_MESSAGING_SENDER_ID": "342867382372",
+    "VITE_FIREBASE_APP_ID": "1:342867382372:web:2541940d577102ad754f71",
+    "VITE_FIREBASE_DATABASE_ID": "ai-studio-aicreativeengine-b48caf82-bffb-40b0-9beb-3830ee286301"
+  },
+  "rewrites": [
+    {
+      "source": "/((?!assets/|favicon\\.svg|manifest\\.json|robots\\.txt|sitemap\\.xml).*)",
+      "destination": "/index.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/assets/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    },
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        }
+      ]
+    }
+  ]
+}
