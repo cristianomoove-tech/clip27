@@ -276,6 +276,8 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
       }
     }
 
+    let lastUiUpdateTime = 0;
+
     const renderLoop = (now: number) => {
       const dt = (now - lastTimeRef.current) / 1000;
       lastTimeRef.current = now;
@@ -287,7 +289,9 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
           activeSegRef.current = 'hook';
           const h = hookVideoRef.current;
           if (h) {
-            h.currentTime = hookTrimStart;
+            if (Math.abs(h.currentTime - hookTrimStart) > 0.08) {
+              h.currentTime = hookTrimStart;
+            }
             h.playbackRate = speed;
             h.play().catch(() => {});
           }
@@ -295,7 +299,12 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
             playSegmentAudio('hook', 0);
           }
         }
-        setCurrentTime(currentTimeRef.current);
+
+        // Throttle React state update to ~20fps to keep render loop buttery smooth
+        if (now - lastUiUpdateTime > 50 || currentTimeRef.current === 0) {
+          lastUiUpdateTime = now;
+          setCurrentTime(currentTimeRef.current);
+        }
       }
 
       const t = currentTimeRef.current;
@@ -310,7 +319,9 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
           if (bVideo) bVideo.pause();
           if (cVideo) cVideo.pause();
           if (hVideo) {
-            hVideo.currentTime = hookTrimStart;
+            if (Math.abs(hVideo.currentTime - hookTrimStart) > 0.08) {
+              hVideo.currentTime = hookTrimStart;
+            }
             hVideo.playbackRate = speed;
             if (isPlaying) hVideo.play().catch(() => {});
           }
@@ -324,7 +335,9 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
           if (hVideo) hVideo.pause();
           if (cVideo) cVideo.pause();
           if (bVideo) {
-            bVideo.currentTime = bodyTrimStart;
+            if (Math.abs(bVideo.currentTime - bodyTrimStart) > 0.08) {
+              bVideo.currentTime = bodyTrimStart;
+            }
             bVideo.playbackRate = speed;
             if (isPlaying) bVideo.play().catch(() => {});
           }
@@ -338,7 +351,9 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
           if (hVideo) hVideo.pause();
           if (bVideo) bVideo.pause();
           if (cVideo) {
-            cVideo.currentTime = ctaTrimStart;
+            if (Math.abs(cVideo.currentTime - ctaTrimStart) > 0.08) {
+              cVideo.currentTime = ctaTrimStart;
+            }
             cVideo.playbackRate = speed;
             if (isPlaying) cVideo.play().catch(() => {});
           }

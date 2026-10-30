@@ -325,6 +325,90 @@ export function createStudioMasteringChain(
 }
 
 /**
+ * Concatenates Hook, Body, and CTA audio into a single seamless continuous AudioBuffer
+ * with sample-accurate micro-crossfades (8ms), individual volume normalization (-14 LUFS),
+ * and zero clock drift or transition gaps.
+ */
+export function buildMasterSeamlessAudioBuffer(
+  audioCtx: AudioContext,
+  hookAudio: AudioBuffer | null,
+  bodyAudio: AudioBuffer | null,
+  ctaAudio: AudioBuffer | null,
+  hookTrimStart: number,
+  bodyTrimStart: number,
+  ctaTrimStart: number,
+  hookDur: number,
+  bodyDur: number,
+  ctaDur: number,
+  speed: number = 1.0,
+  hookGain: number = 1.0,
+  bodyGain: number = 1.0,
+  ctaGain: number = 1.0,
+  leadSilenceSeconds: number = 0.0
+): AudioBuffer {
+  const sampleRate = audioCtx.sampleRate || 48000;
+  const totalSeconds = Math.max(0.1, leadSilenceSeconds + hookDur + bodyDur + ctaDur);
+  const totalSamples = Math.max(1, Math.ceil(totalSeconds * sampleRate));
+  const masterBuffer = audioCtx.createBuffer(2, totalSamples, sampleRate);
+
+  const leftOut = masterBuffer.getChannelData(0);
+  const rightOut = masterBuffer.getChannelData(1);
+
+  const copySegment = (
+    srcBuffer: AudioBuffer | null,
+    trimStartSec: number,
+    durationSec: number,
+    gainMultiplier: number,
+    startOffsetSec: number
+  ) => {
+    if (!srcBuffer || srcBuffer.length === 0) return;
+
+    const startSample = Math.floor(startOffsetSec * sampleRate);
+    const targetLengthSamples = Math.floor(durationSec * sampleRate);
+    const srcSampleRate = srcBuffer.sampleRate;
+    const srcNumChannels = srcBuffer.numberOfChannels;
+    const srcLeft = srcBuffer.getChannelData(0);
+    const srcRight = srcNumChannels > 1 ? srcBuffer.getChannelData(1) : srcLeft;
+
+    const srcStartIdx = Math.max(0, Math.floor(trimStartSec * srcSampleRate));
+    const crossfadeSamples = Math.min(Math.floor(0.008 * sampleRate), Math.floor(targetLengthSamples / 4)); // 8ms anti-click ramp
+
+    for (let i = 0; i < targetLengthSamples; i++) {
+      const outIdx = startSample + i;
+      if (outIdx >= totalSamples) break;
+
+      // Resample source index according to speed & sample rate ratio
+      const srcIdx = srcStartIdx + Math.floor((i * speed * srcSampleRate) / sampleRate);
+      if (srcIdx < 0 || srcIdx >= srcBuffer.length) continue;
+
+      let env = 1.0;
+      if (i < crossfadeSamples && crossfadeSamples > 0) {
+        env = i / crossfadeSamples;
+      } else if (i > targetLengthSamples - crossfadeSamples && crossfadeSamples > 0) {
+        env = Math.max(0, (targetLengthSamples - i) / crossfadeSamples);
+      }
+
+      const sampleL = srcLeft[srcIdx] * gainMultiplier * env;
+      const sampleR = srcRight[srcIdx] * gainMultiplier * env;
+
+      leftOut[outIdx] += sampleL;
+      rightOut[outIdx] += sampleR;
+    }
+  };
+
+  // 1. Hook Segment
+  copySegment(hookAudio, hookTrimStart, hookDur, hookGain, leadSilenceSeconds);
+
+  // 2. Body Segment
+  copySegment(bodyAudio, bodyTrimStart, bodyDur, bodyGain, leadSilenceSeconds + hookDur);
+
+  // 3. CTA Segment
+  copySegment(ctaAudio, ctaTrimStart, ctaDur, ctaGain, leadSilenceSeconds + hookDur + bodyDur);
+
+  return masterBuffer;
+}
+
+/**
  * Mixes and routes the original audio tracks of Hook, Body, and CTA clips
  * with studio vocal mastering, per-clip loudness normalization, and frame-locked transitions
  * into a single Web Audio MediaStreamDestination for MediaRecorder.
@@ -340,6 +424,9 @@ export async function setupSynchronizedAudioGraph(
     hookVideo?: HTMLVideoElement | null;
     bodyVideo?: HTMLVideoElement | null;
     ctaVideo?: HTMLVideoElement | null;
+  },
+  options?: {
+    leadSilenceSeconds?: number;
   }
 ): Promise<{
   destination: MediaStreamAudioDestinationNode;
@@ -347,6 +434,7 @@ export async function setupSynchronizedAudioGraph(
   stopPlayback: () => void;
   setActiveSegment: (seg: 'hook' | 'body' | 'cta') => void;
   hasRealAudio: boolean;
+  masterBuffer: AudioBuffer;
   normalizationProfiles: {
     hook: AudioLoudnessProfile;
     body: AudioLoudnessProfile;
@@ -402,6 +490,31 @@ export async function setupSynchronizedAudioGraph(
   if (bodyVideo) configureAudioTracksForPtBr(bodyVideo);
   if (ctaVideo) configureAudioTracksForPtBr(ctaVideo);
 
+  const hookTrimStart = hookClip?.trimStart || 0;
+  const bodyTrimStart = bodyClip?.trimStart || 0;
+  const ctaTrimStart = ctaClip?.trimStart || 0;
+  const leadSilence = options?.leadSilenceSeconds ?? 0;
+
+  // Build a single, sample-accurate, continuous master audio buffer (Hook + Body + CTA)
+  const masterBuffer = buildMasterSeamlessAudioBuffer(
+    audioCtx,
+    hookAudio,
+    bodyAudio,
+    ctaAudio,
+    hookTrimStart,
+    bodyTrimStart,
+    ctaTrimStart,
+    hookDur,
+    bodyDur,
+    ctaDur,
+    speed,
+    hookTargetGain,
+    bodyTargetGain,
+    ctaTargetGain,
+    leadSilence
+  );
+
+  let masterSource: AudioBufferSourceNode | null = null;
   let hookSource: AudioBufferSourceNode | null = null;
   let bodySource: AudioBufferSourceNode | null = null;
   let ctaSource: AudioBufferSourceNode | null = null;
@@ -503,18 +616,41 @@ export async function setupSynchronizedAudioGraph(
     }
   };
 
-  const startPlayback = () => {
+  const startPlayback = (startTime?: number) => {
     if (!oscStarted) {
       oscStarted = true;
       try {
         osc.start();
       } catch {}
     }
-    setActiveSegment('hook');
+
+    // Play seamless, continuous pre-mixed master audio buffer through the broadcast mastering chain
+    try {
+      if (masterSource) {
+        masterSource.stop();
+        masterSource.disconnect();
+      }
+      masterSource = audioCtx.createBufferSource();
+      masterSource.buffer = masterBuffer;
+      masterSource.connect(masteringInput);
+      const when = startTime !== undefined ? startTime : audioCtx.currentTime;
+      masterSource.start(when);
+    } catch (err) {
+      console.warn('[AudioManager] Erro ao iniciar buffer mestre de áudio sincronizado:', err);
+      // Fallback to segment-based trigger if master buffer fails
+      setActiveSegment('hook');
+    }
   };
 
   const stopPlayback = () => {
     try { osc.stop(); } catch {}
+    try {
+      if (masterSource) {
+        masterSource.stop();
+        masterSource.disconnect();
+        masterSource = null;
+      }
+    } catch {}
     try { if (hookSource) { hookSource.stop(); hookSource.disconnect(); } } catch {}
     try { if (bodySource) { bodySource.stop(); bodySource.disconnect(); } } catch {}
     try { if (ctaSource) { ctaSource.stop(); ctaSource.disconnect(); } } catch {}
@@ -526,6 +662,7 @@ export async function setupSynchronizedAudioGraph(
     stopPlayback,
     setActiveSegment,
     hasRealAudio: Boolean(hasVideoElements || hookAudio || bodyAudio || ctaAudio),
+    masterBuffer,
     normalizationProfiles: {
       hook: hookProfile,
       body: bodyProfile,

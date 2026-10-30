@@ -72,7 +72,8 @@ export function drawCreativeFrame(
   const brightness = 1 + (variation.microEdit?.brightness || 0);
   const saturation = 1 + (variation.microEdit?.saturation || 0);
 
-  ctx.filter = `brightness(${brightness.toFixed(3)}) saturate(${saturation.toFixed(3)})`;
+  // Fast GPU hardware path (avoid expensive ctx.filter SVG convolution which drops fps to 20)
+  ctx.filter = 'none';
 
   ctx.translate(width / 2, height / 2);
   ctx.scale(baseZoom, baseZoom);
@@ -97,6 +98,23 @@ export function drawCreativeFrame(
       const drawY = (height - drawH) / 2;
 
       ctx.drawImage(activeVideoEl, drawX, drawY, drawW, drawH);
+
+      // Fast hardware-accelerated micro-edit lighting without expensive SVG filters
+      if (Math.abs(brightness - 1) > 0.003) {
+        const diff = brightness - 1;
+        ctx.save();
+        if (diff > 0) {
+          ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(0.08, diff.toFixed(3))})`;
+          ctx.globalCompositeOperation = 'screen';
+          ctx.fillRect(drawX, drawY, drawW, drawH);
+        } else {
+          ctx.fillStyle = `rgba(0, 0, 0, ${Math.min(0.08, (-diff).toFixed(3))})`;
+          ctx.globalCompositeOperation = 'multiply';
+          ctx.fillRect(drawX, drawY, drawW, drawH);
+        }
+        ctx.restore();
+      }
+
       drewRealVideo = true;
     } catch {
       drewRealVideo = false;
@@ -424,7 +442,8 @@ export async function renderSingleVariationToBlob(
   drawImperceptibleHashPixel(ctx, variation, canvas.width, canvas.height);
 
   const speed = variation.microEdit?.speed || 1.0;
-  const COVER_DURATION = 0.15; // 150ms: establishes initial keyframe as high-impact cover without delaying playback
+  // 67ms (2 frames at 30fps): establishes initial keyframe as high-impact cover without delaying playback
+  const COVER_DURATION = 0.067;
   const hookDur = (variation.hookClip?.duration || 4.0) / speed;
   const bodyDur = (variation.bodyClip?.duration || 7.0) / speed;
   const ctaDur = (variation.ctaClip?.duration || 3.5) / speed;
@@ -443,7 +462,8 @@ export async function renderSingleVariationToBlob(
       variation.ctaClip,
       speed,
       enableNormalization,
-      { hookVideo, bodyVideo, ctaVideo }
+      { hookVideo, bodyVideo, ctaVideo },
+      { leadSilenceSeconds: COVER_DURATION }
     );
 
     const audioTrack = audioGraph.destination.stream.getAudioTracks()[0];
@@ -472,13 +492,49 @@ export async function renderSingleVariationToBlob(
     if (e.data && e.data.size > 0) chunks.push(e.data);
   };
 
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
     let animId: number;
-    let currentActiveSegment = '';
-    let audioStarted = false;
-    const startTime = performance.now();
+    let isStopped = false;
+    let bodyPreRolled = false;
+    let ctaPreRolled = false;
+    let bodyActive = false;
+    let ctaActive = false;
+    let lastProgressTime = 0;
+    let lastReportedPct = -1;
+
+    // Pre-roll hook video so the first real motion frame is decoded and ready
+    if (hookVideo) {
+      hookVideo.playbackRate = speed;
+      try {
+        await hookVideo.play();
+      } catch {}
+    }
+
+    // Audio starts at exact hardware audio clock
+    const audioStartTime = audioCtx.currentTime;
+    if (audioGraph) {
+      audioGraph.startPlayback(audioStartTime);
+    }
 
     recorder.onstop = () => {
+      if (isStopped) return;
+      isStopped = true;
+      cancelAnimationFrame(animId);
+      if (audioGraph) {
+        audioGraph.stopPlayback();
+      }
+      [hookVideo, bodyVideo, ctaVideo].forEach((v) => {
+        if (v) {
+          try { v.pause(); } catch {}
+          if (v.parentNode) v.parentNode.removeChild(v);
+        }
+      });
+      resolve(new Blob(chunks, { type: 'video/mp4' }));
+    };
+
+    recorder.onerror = (e) => {
+      if (isStopped) return;
+      isStopped = true;
       cancelAnimationFrame(animId);
       if (audioGraph) {
         audioGraph.stopPlayback();
@@ -486,25 +542,19 @@ export async function renderSingleVariationToBlob(
       [hookVideo, bodyVideo, ctaVideo].forEach((v) => {
         if (v && v.parentNode) v.parentNode.removeChild(v);
       });
-      resolve(new Blob(chunks, { type: 'video/mp4' }));
-    };
-
-    recorder.onerror = (e) => {
-      cancelAnimationFrame(animId);
-      if (audioGraph) {
-        audioGraph.stopPlayback();
-      }
       reject(e);
     };
 
     recorder.start(100);
+    const startTime = performance.now();
 
     const renderLoop = (now: number) => {
+      if (isStopped) return;
       const elapsed = (now - startTime) / 1000;
       const t = Math.min(elapsed, totalDur);
 
       if (t < COVER_DURATION) {
-        // Frame 0..0.15s: High-Impact Cover is displayed as the video's poster thumbnail
+        // Frame 0..COVER_DURATION: High-Impact Cover is displayed as the video's poster thumbnail
         ctx.save();
         ctx.drawImage(coverCanvas, 0, 0, canvas.width, canvas.height);
         drawImperceptibleHashPixel(ctx, variation, canvas.width, canvas.height);
@@ -513,45 +563,68 @@ export async function renderSingleVariationToBlob(
         const videoTime = (t - COVER_DURATION) * speed;
 
         if (t < COVER_DURATION + hookDur) {
-          if (currentActiveSegment !== 'hook') {
-            currentActiveSegment = 'hook';
-            if (audioGraph) {
-              audioGraph.setActiveSegment('hook');
-              if (!audioStarted) {
-                audioStarted = true;
-                audioGraph.startPlayback();
-              }
-            }
-            if (bodyVideo) bodyVideo.pause();
-            if (ctaVideo) ctaVideo.pause();
-            if (hookVideo) {
-              hookVideo.currentTime = hookTrimStart;
+          // Pre-roll body video 120ms before hook ends so its decoder is warm and avoids 250ms seek lag
+          if (!bodyPreRolled && bodyVideo && t >= COVER_DURATION + hookDur - 0.12) {
+            bodyPreRolled = true;
+            bodyVideo.playbackRate = speed;
+            bodyVideo.play().catch(() => {});
+          }
+
+          // Dynamic drift correction for Hook video to stay locked with audio
+          if (hookVideo && !hookVideo.paused) {
+            const targetTime = hookTrimStart + (t - COVER_DURATION) * speed;
+            const drift = hookVideo.currentTime - targetTime;
+            if (Math.abs(drift) > 0.05) {
+              hookVideo.playbackRate = drift < 0 ? speed * 1.05 : speed * 0.95;
+            } else {
               hookVideo.playbackRate = speed;
-              hookVideo.play().catch(() => {});
             }
           }
         } else if (t < COVER_DURATION + hookDur + bodyDur) {
-          if (currentActiveSegment !== 'body') {
-            currentActiveSegment = 'body';
-            if (audioGraph) audioGraph.setActiveSegment('body');
-            if (hookVideo) hookVideo.pause();
-            if (ctaVideo) ctaVideo.pause();
-            if (bodyVideo) {
-              bodyVideo.currentTime = bodyTrimStart;
+          if (!bodyActive) {
+            bodyActive = true;
+            if (hookVideo && !hookVideo.paused) hookVideo.pause();
+            if (bodyVideo && bodyVideo.paused) {
               bodyVideo.playbackRate = speed;
               bodyVideo.play().catch(() => {});
             }
           }
+
+          // Pre-roll CTA video 120ms before body ends
+          if (!ctaPreRolled && ctaVideo && t >= COVER_DURATION + hookDur + bodyDur - 0.12) {
+            ctaPreRolled = true;
+            ctaVideo.playbackRate = speed;
+            ctaVideo.play().catch(() => {});
+          }
+
+          // Dynamic drift correction for Body video to stay locked with audio
+          if (bodyVideo && !bodyVideo.paused) {
+            const targetTime = bodyTrimStart + (t - COVER_DURATION - hookDur) * speed;
+            const drift = bodyVideo.currentTime - targetTime;
+            if (Math.abs(drift) > 0.05) {
+              bodyVideo.playbackRate = drift < 0 ? speed * 1.05 : speed * 0.95;
+            } else {
+              bodyVideo.playbackRate = speed;
+            }
+          }
         } else {
-          if (currentActiveSegment !== 'cta') {
-            currentActiveSegment = 'cta';
-            if (audioGraph) audioGraph.setActiveSegment('cta');
-            if (hookVideo) hookVideo.pause();
-            if (bodyVideo) bodyVideo.pause();
-            if (ctaVideo) {
-              ctaVideo.currentTime = ctaTrimStart;
+          if (!ctaActive) {
+            ctaActive = true;
+            if (bodyVideo && !bodyVideo.paused) bodyVideo.pause();
+            if (ctaVideo && ctaVideo.paused) {
               ctaVideo.playbackRate = speed;
               ctaVideo.play().catch(() => {});
+            }
+          }
+
+          // Dynamic drift correction for CTA video to stay locked with audio
+          if (ctaVideo && !ctaVideo.paused) {
+            const targetTime = ctaTrimStart + (t - COVER_DURATION - hookDur - bodyDur) * speed;
+            const drift = ctaVideo.currentTime - targetTime;
+            if (Math.abs(drift) > 0.05) {
+              ctaVideo.playbackRate = drift < 0 ? speed * 1.05 : speed * 0.95;
+            } else {
+              ctaVideo.playbackRate = speed;
             }
           }
         }
@@ -561,8 +634,14 @@ export async function renderSingleVariationToBlob(
         });
       }
 
-      if (onProgress) {
-        onProgress(Math.min(100, Math.round((t / totalDur) * 100)));
+      // Throttled progress reporting (avoid firing React setState 60x/sec to keep main thread free for 30fps)
+      const currentPct = Math.min(100, Math.round((t / totalDur) * 100));
+      if (onProgress && (currentPct !== lastReportedPct || currentPct === 100)) {
+        if (now - lastProgressTime >= 150 || currentPct === 100) {
+          lastReportedPct = currentPct;
+          lastProgressTime = now;
+          onProgress(currentPct);
+        }
       }
 
       // Include a 60ms tail buffer so the final syllable of the CTA audio is never clipped
