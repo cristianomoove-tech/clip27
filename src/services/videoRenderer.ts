@@ -416,11 +416,19 @@ export async function renderSingleVariationToBlob(
     createVideoElement(ctaUrl, false, ctaTrimStart),
   ]);
 
+  // Pre-render the High-Impact Cover Canvas to place it as the 1st frame of the final MP4 video
+  const coverCanvas = await renderHighImpactCoverCanvas(variation, hookVideo);
+
+  // Paint the cover IMMEDIATELY onto the recording canvas so frame 0 is guaranteed to be the cover
+  ctx.drawImage(coverCanvas, 0, 0, canvas.width, canvas.height);
+  drawImperceptibleHashPixel(ctx, variation, canvas.width, canvas.height);
+
   const speed = variation.microEdit?.speed || 1.0;
+  const COVER_DURATION = 0.15; // 150ms: establishes initial keyframe as high-impact cover without delaying playback
   const hookDur = (variation.hookClip?.duration || 4.0) / speed;
   const bodyDur = (variation.bodyClip?.duration || 7.0) / speed;
   const ctaDur = (variation.ctaClip?.duration || 3.5) / speed;
-  const totalDur = hookDur + bodyDur + ctaDur;
+  const totalDur = COVER_DURATION + hookDur + bodyDur + ctaDur;
 
   const stream = canvas.captureStream(30);
 
@@ -467,6 +475,7 @@ export async function renderSingleVariationToBlob(
   return new Promise((resolve, reject) => {
     let animId: number;
     let currentActiveSegment = '';
+    let audioStarted = false;
     const startTime = performance.now();
 
     recorder.onstop = () => {
@@ -489,55 +498,68 @@ export async function renderSingleVariationToBlob(
     };
 
     recorder.start(100);
-    if (audioGraph) {
-      audioGraph.startPlayback();
-    }
 
     const renderLoop = (now: number) => {
       const elapsed = (now - startTime) / 1000;
       const t = Math.min(elapsed, totalDur);
 
-      if (t < hookDur) {
-        if (currentActiveSegment !== 'hook') {
-          currentActiveSegment = 'hook';
-          if (audioGraph) audioGraph.setActiveSegment('hook');
-          if (bodyVideo) bodyVideo.pause();
-          if (ctaVideo) ctaVideo.pause();
-          if (hookVideo) {
-            hookVideo.currentTime = hookTrimStart;
-            hookVideo.playbackRate = speed;
-            hookVideo.play().catch(() => {});
-          }
-        }
-      } else if (t < hookDur + bodyDur) {
-        if (currentActiveSegment !== 'body') {
-          currentActiveSegment = 'body';
-          if (audioGraph) audioGraph.setActiveSegment('body');
-          if (hookVideo) hookVideo.pause();
-          if (ctaVideo) ctaVideo.pause();
-          if (bodyVideo) {
-            bodyVideo.currentTime = bodyTrimStart;
-            bodyVideo.playbackRate = speed;
-            bodyVideo.play().catch(() => {});
-          }
-        }
+      if (t < COVER_DURATION) {
+        // Frame 0..0.15s: High-Impact Cover is displayed as the video's poster thumbnail
+        ctx.save();
+        ctx.drawImage(coverCanvas, 0, 0, canvas.width, canvas.height);
+        drawImperceptibleHashPixel(ctx, variation, canvas.width, canvas.height);
+        ctx.restore();
       } else {
-        if (currentActiveSegment !== 'cta') {
-          currentActiveSegment = 'cta';
-          if (audioGraph) audioGraph.setActiveSegment('cta');
-          if (hookVideo) hookVideo.pause();
-          if (bodyVideo) bodyVideo.pause();
-          if (ctaVideo) {
-            ctaVideo.currentTime = ctaTrimStart;
-            ctaVideo.playbackRate = speed;
-            ctaVideo.play().catch(() => {});
+        const videoTime = (t - COVER_DURATION) * speed;
+
+        if (t < COVER_DURATION + hookDur) {
+          if (currentActiveSegment !== 'hook') {
+            currentActiveSegment = 'hook';
+            if (audioGraph) {
+              audioGraph.setActiveSegment('hook');
+              if (!audioStarted) {
+                audioStarted = true;
+                audioGraph.startPlayback();
+              }
+            }
+            if (bodyVideo) bodyVideo.pause();
+            if (ctaVideo) ctaVideo.pause();
+            if (hookVideo) {
+              hookVideo.currentTime = hookTrimStart;
+              hookVideo.playbackRate = speed;
+              hookVideo.play().catch(() => {});
+            }
+          }
+        } else if (t < COVER_DURATION + hookDur + bodyDur) {
+          if (currentActiveSegment !== 'body') {
+            currentActiveSegment = 'body';
+            if (audioGraph) audioGraph.setActiveSegment('body');
+            if (hookVideo) hookVideo.pause();
+            if (ctaVideo) ctaVideo.pause();
+            if (bodyVideo) {
+              bodyVideo.currentTime = bodyTrimStart;
+              bodyVideo.playbackRate = speed;
+              bodyVideo.play().catch(() => {});
+            }
+          }
+        } else {
+          if (currentActiveSegment !== 'cta') {
+            currentActiveSegment = 'cta';
+            if (audioGraph) audioGraph.setActiveSegment('cta');
+            if (hookVideo) hookVideo.pause();
+            if (bodyVideo) bodyVideo.pause();
+            if (ctaVideo) {
+              ctaVideo.currentTime = ctaTrimStart;
+              ctaVideo.playbackRate = speed;
+              ctaVideo.play().catch(() => {});
+            }
           }
         }
-      }
 
-      drawCreativeFrame(ctx, variation, t * speed, hookVideo, bodyVideo, ctaVideo, {
-        isExporting: true,
-      });
+        drawCreativeFrame(ctx, variation, videoTime, hookVideo, bodyVideo, ctaVideo, {
+          isExporting: true,
+        });
+      }
 
       if (onProgress) {
         onProgress(Math.min(100, Math.round((t / totalDur) * 100)));
@@ -567,13 +589,14 @@ function loadImageElement(src: string): Promise<HTMLImageElement | null> {
 }
 
 /**
- * Generates a high-impact 9:16 Cover Thumbnail PNG with the exact FIRST FRAME of the Hook video
+ * Generates a high-impact 9:16 Cover Canvas with the exact FIRST FRAME of the Hook video
  * as the background, overlaid with the High-Impact Cover Title + Badge.
- * Note: This is strictly for the separate Cover Image (.png); the MP4 video remains 100% clean.
+ * Used both for the initial frame of the MP4 video and for the PNG export.
  */
-export async function renderHighImpactCoverToPngBlob(
-  variation: CreativeVariation
-): Promise<Blob> {
+export async function renderHighImpactCoverCanvas(
+  variation: CreativeVariation,
+  preloadedHookVideo?: HTMLVideoElement | null
+): Promise<HTMLCanvasElement> {
   const width = 540;
   const height = 960;
   const canvas = document.createElement('canvas');
@@ -582,73 +605,100 @@ export async function renderHighImpactCoverToPngBlob(
   const ctx = canvas.getContext('2d')!;
 
   const hookClip = variation.hookClip;
-  const storedData =
-    getClipBlobData(hookClip?.id) ||
-    getClipBlobData(hookClip?.fileName) ||
-    getClipBlobData(hookClip?.title);
-
-  const hookUrl =
-    hookClip?.fileUrl ||
-    storedData?.url ||
-    (storedData?.file ? URL.createObjectURL(storedData.file) : undefined);
-
-  // 1. Try cached first-frame DataURL or extract live from the Hook video's first frame (0.05s)
-  let firstFrameDataUrl = getClipFirstFrameDataUrl(hookClip);
-  if (!firstFrameDataUrl && hookUrl) {
-    const extracted = await extractVideoFirstFrameAndDuration(hookUrl, hookClip?.duration || 4.0);
-    if (extracted.thumbnailDataUrl) {
-      firstFrameDataUrl = extracted.thumbnailDataUrl;
-      if (hookClip) {
-        hookClip.thumbnailDataUrl = firstFrameDataUrl;
-      }
-      if (storedData) {
-        storedData.thumbnailDataUrl = firstFrameDataUrl;
-      }
-    }
-  }
-
   let drewHookFirstFrame = false;
 
-  if (firstFrameDataUrl) {
-    const img = await loadImageElement(firstFrameDataUrl);
-    if (img && img.width > 0 && img.height > 0) {
-      const scale = Math.max(width / img.width, height / img.height);
-      const drawW = img.width * scale;
-      const drawH = img.height * scale;
+  // 1. If preloadedHookVideo is provided and has dimensions, draw it directly
+  if (
+    preloadedHookVideo &&
+    (preloadedHookVideo.videoWidth > 0 || preloadedHookVideo.readyState >= 2)
+  ) {
+    try {
+      const vWidth = preloadedHookVideo.videoWidth || 540;
+      const vHeight = preloadedHookVideo.videoHeight || 960;
+      const scale = Math.max(width / vWidth, height / vHeight);
+      const drawW = vWidth * scale;
+      const drawH = vHeight * scale;
       const drawX = (width - drawW) / 2;
       const drawY = (height - drawH) / 2;
-      ctx.drawImage(img, drawX, drawY, drawW, drawH);
+      ctx.drawImage(preloadedHookVideo, drawX, drawY, drawW, drawH);
       drewHookFirstFrame = true;
+    } catch {
+      drewHookFirstFrame = false;
     }
   }
 
-  // Fallback: decode directly from video element at 0.05s if needed
-  if (!drewHookFirstFrame && hookUrl) {
-    const hookVideo = await createVideoElement(hookUrl, false, 0.05);
-    if (hookVideo && hookVideo.videoWidth > 0 && hookVideo.videoHeight > 0) {
+  // 2. Otherwise try cached thumbnailDataUrl / first-frame DataURL
+  if (!drewHookFirstFrame) {
+    const storedData =
+      getClipBlobData(hookClip?.id) ||
+      getClipBlobData(hookClip?.fileName) ||
+      getClipBlobData(hookClip?.title);
+
+    const hookUrl =
+      hookClip?.fileUrl ||
+      storedData?.url ||
+      (storedData?.file ? URL.createObjectURL(storedData.file) : undefined);
+
+    let firstFrameDataUrl = getClipFirstFrameDataUrl(hookClip);
+    if (!firstFrameDataUrl && hookUrl) {
       try {
-        const vWidth = hookVideo.videoWidth;
-        const vHeight = hookVideo.videoHeight;
-        const scale = Math.max(width / vWidth, height / vHeight);
-        const drawW = vWidth * scale;
-        const drawH = vHeight * scale;
-        const drawX = (width - drawW) / 2;
-        const drawY = (height - drawH) / 2;
-        ctx.drawImage(hookVideo, drawX, drawY, drawW, drawH);
-        drewHookFirstFrame = true;
+        const extracted = await extractVideoFirstFrameAndDuration(
+          hookUrl,
+          hookClip?.duration || 4.0
+        );
+        if (extracted.thumbnailDataUrl) {
+          firstFrameDataUrl = extracted.thumbnailDataUrl;
+          if (hookClip) {
+            hookClip.thumbnailDataUrl = firstFrameDataUrl;
+          }
+          if (storedData) {
+            storedData.thumbnailDataUrl = firstFrameDataUrl;
+          }
+        }
       } catch {}
     }
-    if (hookVideo && hookVideo.parentNode) {
-      hookVideo.parentNode.removeChild(hookVideo);
+
+    if (firstFrameDataUrl) {
+      const img = await loadImageElement(firstFrameDataUrl);
+      if (img && img.width > 0 && img.height > 0) {
+        const scale = Math.max(width / img.width, height / img.height);
+        const drawW = img.width * scale;
+        const drawH = img.height * scale;
+        const drawX = (width - drawW) / 2;
+        const drawY = (height - drawH) / 2;
+        ctx.drawImage(img, drawX, drawY, drawW, drawH);
+        drewHookFirstFrame = true;
+      }
+    }
+
+    // 3. Fallback: decode directly from video element at 0.05s if needed
+    if (!drewHookFirstFrame && hookUrl) {
+      const hookVideo = await createVideoElement(hookUrl, false, 0.05);
+      if (hookVideo && hookVideo.videoWidth > 0 && hookVideo.videoHeight > 0) {
+        try {
+          const vWidth = hookVideo.videoWidth;
+          const vHeight = hookVideo.videoHeight;
+          const scale = Math.max(width / vWidth, height / vHeight);
+          const drawW = vWidth * scale;
+          const drawH = vHeight * scale;
+          const drawX = (width - drawW) / 2;
+          const drawY = (height - drawH) / 2;
+          ctx.drawImage(hookVideo, drawX, drawY, drawW, drawH);
+          drewHookFirstFrame = true;
+        } catch {}
+      }
+      if (hookVideo && hookVideo.parentNode) {
+        hookVideo.parentNode.removeChild(hookVideo);
+      }
     }
   }
 
-  // Only if it's a demo clip with no real video file at all, draw demo background
+  // 4. Only if it's a demo clip with no real video file at all, draw demo background
   if (!drewHookFirstFrame) {
     drawCleanProceduralDemoSegment(ctx, hookClip, 'hook', 0.2, width, height);
   }
 
-  // Light, subtle contrast gradient so the Hook's first frame remains bright and clearly visible
+  // 5. Light, subtle contrast gradient so the Hook's first frame remains bright and clearly visible
   const grad = ctx.createLinearGradient(0, 0, 0, height);
   grad.addColorStop(0, 'rgba(0, 0, 0, 0.28)');
   grad.addColorStop(0.3, 'rgba(0, 0, 0, 0.08)');
@@ -657,7 +707,7 @@ export async function renderHighImpactCoverToPngBlob(
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, width, height);
 
-  // Top Badge Pill
+  // 6. Top Badge Pill
   const badgeText = (variation.coverBadge || '🚨 ALERTA DE COMPRA').split('·')[0].trim();
   ctx.save();
   ctx.font = '900 18px Inter, system-ui, sans-serif';
@@ -678,7 +728,7 @@ export async function renderHighImpactCoverToPngBlob(
   ctx.fillText(badgeText, width / 2, badgeY + badgeH / 2 + 1);
   ctx.restore();
 
-  // High-Impact Main Cover Title (Wrapped with semi-transparent glass box so the Hook image shines through)
+  // 7. High-Impact Main Cover Title (Wrapped with semi-transparent glass box so the Hook image shines through)
   const titleText = (
     variation.coverTitle ||
     variation.headline ||
@@ -730,6 +780,17 @@ export async function renderHighImpactCoverToPngBlob(
   });
   ctx.restore();
 
+  return canvas;
+}
+
+/**
+ * Generates a high-impact 9:16 Cover Thumbnail PNG with the exact FIRST FRAME of the Hook video
+ * as the background, overlaid with the High-Impact Cover Title + Badge.
+ */
+export async function renderHighImpactCoverToPngBlob(
+  variation: CreativeVariation
+): Promise<Blob> {
+  const canvas = await renderHighImpactCoverCanvas(variation);
   return new Promise((resolve) => {
     canvas.toBlob((blob) => {
       resolve(blob || new Blob([], { type: 'image/png' }));

@@ -4,6 +4,7 @@ import { UsuarioLicenca, AppSettings } from '../types';
 
 export const ADMIN_MASTER_EMAIL = 'cristianomoove@gmail.com';
 export const LICENSE_ANNUAL_PRICE = 49.90;
+export const ASAAS_ANNUAL_CHECKOUT_URL = 'https://www.asaas.com/000/c/mqyntx5tlifhcbie';
 const LOCAL_ACTIVE_LICENSE_KEY = 'clip27_active_license';
 const LOCAL_ALL_LICENSES_KEY = 'clip27_all_licenses';
 

@@ -23,6 +23,7 @@ import {
 import { User } from 'firebase/auth';
 import { AppSettings, UsuarioLicenca } from '../types';
 import { AppUser, isUserAdmin } from '../services/firebase';
+import { ASAAS_ANNUAL_CHECKOUT_URL } from '../services/licensingService';
 
 export type TabId = 'dashboard' | 'studio' | 'veo3' | 'trending' | 'remix' | 'academy' | 'admin_licencas';
 
@@ -280,14 +281,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         Até {activeLicenseUser.Data_Expiracao}
                       </span>
                     </div>
-                    {onOpenPaywall && (
-                      <button
-                        onClick={onOpenPaywall}
-                        className="w-full py-1 px-2 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-[10px] font-bold text-white flex items-center justify-center gap-1 cursor-pointer transition-all shadow-sm"
+                    <div className="flex flex-col gap-1.5">
+                      <a
+                        href={ASAAS_ANNUAL_CHECKOUT_URL}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full py-1.5 px-2 rounded-lg bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-600 hover:from-emerald-500 hover:to-teal-500 text-[10px] font-bold text-white flex items-center justify-center gap-1 cursor-pointer transition-all shadow-sm"
                       >
-                        <span>Ativar Licença Anual (R$ 49,90)</span>
-                      </button>
-                    )}
+                        <Zap className="w-3 h-3 text-amber-300 fill-current" />
+                        <span>Comprar no Asaas (R$ 49,90)</span>
+                      </a>
+                      {onOpenPaywall && (
+                        <button
+                          onClick={onOpenPaywall}
+                          className="w-full py-0.5 text-[9px] text-purple-300 hover:text-white transition-colors cursor-pointer text-center"
+                        >
+                          Ver Detalhes do Plano
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ) : activeLicenseUser.Status_Plano === 'Ativo_Anual' ? (
                   <div className="flex items-center justify-between text-[10px] font-mono">
@@ -305,14 +317,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       <Lock className="w-3 h-3" />
                       <span>{activeLicenseUser.Status_Plano}</span>
                     </span>
-                    {onOpenPaywall && (
-                      <button
-                        onClick={onOpenPaywall}
-                        className="text-[9px] text-emerald-400 hover:underline font-bold"
-                      >
-                        Ativar R$ 49,90
-                      </button>
-                    )}
+                    <a
+                      href={ASAAS_ANNUAL_CHECKOUT_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[9px] text-emerald-400 hover:underline font-bold flex items-center gap-1"
+                    >
+                      <Zap className="w-2.5 h-2.5 fill-current" />
+                      <span>Comprar R$ 49,90</span>
+                    </a>
                   </div>
                 )}
               </div>

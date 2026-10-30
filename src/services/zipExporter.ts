@@ -72,12 +72,12 @@ export async function exportVariationsToZip(
         totalCount: total,
         currentCode: code,
         percent: Math.round((i / total) * 100),
-        statusText: `Renderizando Vídeo MP4 + Capa PNG ${i + 1} de ${total} (${code})...`,
+        statusText: `Renderizando Vídeo MP4 (Capa no 1º frame) ${i + 1} de ${total} (${code})...`,
       });
     }
 
     try {
-      // 1. Render the variation to a real MP4 video blob with studio audio
+      // 1. Render the variation to a real MP4 video blob with studio audio and embedded 1st-frame cover
       const videoBlob = await renderSingleVariationToBlob(variation, (clipPct) => {
         if (onProgress) {
           const overallPct = Math.round(((i + (clipPct * 0.9) / 100) / total) * 100);
@@ -86,7 +86,7 @@ export async function exportVariationsToZip(
             totalCount: total,
             currentCode: code,
             percent: overallPct,
-            statusText: `Gravando Vídeo MP4 + Áudio Masterizado (${code}): ${clipPct}%`,
+            statusText: `Gravando Vídeo MP4 (Capa no 1º frame) (${code}): ${clipPct}%`,
           });
         }
       });

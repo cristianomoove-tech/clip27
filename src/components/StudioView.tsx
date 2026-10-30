@@ -369,7 +369,13 @@ export const StudioView: React.FC<StudioViewProps> = ({
     });
 
     const typeName = type === 'hook' ? 'Ganchos' : type === 'body' ? 'Corpos' : 'CTAs';
-    showNotice(`${newClips.length} arquivo(s) de ${typeName} carregado(s) com sucesso!`);
+    if (updatedHooks.length === 3 && updatedBodies.length === 3 && updatedCtas.length === 3) {
+      showNotice(
+        `🎉 3 Ganchos + 3 Corpos + 3 CTAs prontos! 27 combinações geradas com Capa de Alto Impacto embutida no 1º frame do MP4!`
+      );
+    } else {
+      showNotice(`${newClips.length} arquivo(s) de ${typeName} carregado(s) com sucesso!`);
+    }
   };
 
   const handleRemoveClip = (type: 'hook' | 'body' | 'cta', id: string) => {
@@ -530,7 +536,7 @@ export const StudioView: React.FC<StudioViewProps> = ({
       });
       setIsGeneratingMatrix(false);
       showNotice(
-        `${variations.length} vídeos únicos + 27 Capas de Alto Impacto + 27 Legendas SEO gerados!`
+        `${variations.length} vídeos únicos com Capa de Alto Impacto embutida no 1º frame gerados!`
       );
     }, 300);
   };
@@ -1045,6 +1051,7 @@ export const StudioView: React.FC<StudioViewProps> = ({
               const coverTitle = v.coverTitle || v.headline || 'NÃO COMPRE ANTES DE VER ESSE TESTE!';
               const coverBadge = (v.coverBadge || '🚨 ALERTA DE COMPRA').split('·')[0].trim();
               const seoCaption = v.seoCaption || '';
+              const hookThumb = getClipFirstFrameDataUrl(v.hookClip) || v.hookClip?.thumbnailDataUrl;
               const isCoverCopied = copiedId === `cover-${v.id}`;
               const isSeoCopied = copiedId === `seo-${v.id}`;
               const isDownloadingCover = downloadingCoverId === v.id;
@@ -1062,8 +1069,11 @@ export const StudioView: React.FC<StudioViewProps> = ({
                         <span className="font-mono text-xs font-black text-fuchsia-400 bg-fuchsia-950/50 px-2 py-0.5 rounded border border-fuchsia-500/30">
                           {v.code}
                         </span>
+                        <span className="text-[9px] font-mono font-bold text-amber-300 bg-amber-950/70 px-1.5 py-0.5 rounded border border-amber-500/40">
+                          CAPA 1º FRAME
+                        </span>
                         <span className="text-[9px] font-mono font-bold text-emerald-400 bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-500/30">
-                          MP4 LIMPO
+                          MP4
                         </span>
                       </div>
                       <div className="flex items-center gap-1.5">
@@ -1088,7 +1098,15 @@ export const StudioView: React.FC<StudioViewProps> = ({
                       onClick={(e) => e.stopPropagation()}
                       className="rounded-xl p-3 mb-3 bg-gradient-to-br from-slate-950 via-purple-950/60 to-rose-950/40 border-2 border-amber-400/50 shadow-[0_0_20px_rgba(250,204,21,0.12)] relative overflow-hidden"
                     >
-                      <div className="flex items-center justify-between gap-2 mb-1.5">
+                      {/* Fundo com o 1º frame real do gancho */}
+                      {hookThumb && (
+                        <img
+                          src={hookThumb}
+                          alt="Fundo Gancho"
+                          className="absolute inset-0 w-full h-full object-cover opacity-35 pointer-events-none"
+                        />
+                      )}
+                      <div className="flex items-center justify-between gap-2 mb-1.5 relative z-10">
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-600 text-white text-[9px] font-black uppercase tracking-wider shadow">
                           <Zap className="w-2.5 h-2.5 fill-current" />
                           <span>CAPA ALTO IMPACTO · {coverBadge}</span>
@@ -1098,11 +1116,11 @@ export const StudioView: React.FC<StudioViewProps> = ({
                         </span>
                       </div>
 
-                      <p className="text-xs sm:text-sm font-black text-amber-300 leading-snug tracking-tight uppercase drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] my-2">
+                      <p className="text-xs sm:text-sm font-black text-amber-300 leading-snug tracking-tight uppercase drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] my-2 relative z-10">
                         &ldquo;{coverTitle}&rdquo;
                       </p>
 
-                      <div className="flex items-center gap-2 mt-2.5 pt-2 border-t border-amber-500/20">
+                      <div className="flex items-center gap-2 mt-2.5 pt-2 border-t border-amber-500/20 relative z-10">
                         <button
                           type="button"
                           onClick={(e) => {

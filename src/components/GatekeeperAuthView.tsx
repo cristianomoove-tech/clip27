@@ -23,7 +23,8 @@ import {
   registerTrialUser, 
   ADMIN_MASTER_EMAIL, 
   LICENSE_ANNUAL_PRICE,
-  DEFAULT_ADMIN_USER 
+  DEFAULT_ADMIN_USER,
+  ASAAS_ANNUAL_CHECKOUT_URL
 } from '../services/licensingService';
 
 interface GatekeeperAuthViewProps {
@@ -166,9 +167,16 @@ export const GatekeeperAuthView: React.FC<GatekeeperAuthViewProps> = ({ onLoginS
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
             <span>Licenciamento Oficial</span>
           </span>
-          <span className="px-3 py-1 rounded-full bg-gradient-to-r from-emerald-500/20 to-teal-500/20 border border-emerald-500/40 text-xs font-bold text-emerald-300">
-            R$ 49,90 / ano
-          </span>
+          <a
+            href={ASAAS_ANNUAL_CHECKOUT_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Comprar Licença Anual Oficial no Asaas"
+            className="px-3.5 py-1.5 rounded-full bg-gradient-to-r from-emerald-500/25 to-teal-500/25 hover:from-emerald-500/35 hover:to-teal-500/35 border border-emerald-500/40 text-xs font-black text-emerald-300 flex items-center gap-1.5 transition-all cursor-pointer shadow-sm hover:scale-105"
+          >
+            <Zap className="w-3.5 h-3.5 text-amber-300 fill-current" />
+            <span>Comprar Licença Anual (R$ 49,90)</span>
+          </a>
         </div>
       </header>
 

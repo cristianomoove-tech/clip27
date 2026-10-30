@@ -39,7 +39,8 @@ import {
   persistLicense,
   runExpirationBot,
   buildWhatsAppBillingLink,
-  subscribeToUserLicenseDoc
+  subscribeToUserLicenseDoc,
+  ASAAS_ANNUAL_CHECKOUT_URL
 } from './services/licensingService';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { 
@@ -54,7 +55,8 @@ import {
   MoreHorizontal,
   Clock,
   Lock,
-  MessageSquare
+  MessageSquare,
+  ArrowRight
 } from 'lucide-react';
 
 function createEmptyWorkspaceProject(): Project {
@@ -532,17 +534,47 @@ export default function App() {
   // 2. LÓGICA DO TRIAL DE 3 DIAS E TRAVA DE EXPIRAÇÃO AUTOMÁTICA EM TEMPO REAL:
   const licenseEval = evaluateLicense(activeLicenseUser);
 
-  // Se TODAY > Data_Expiracao ou Status_Plano == "Expirado": exibe exclusivamente a Tela de Renovação / Compra de Licença (Paywall R$ 49,90)
+  // Se TODAY > Data_Expiracao ou Status_Plano == "Expirado": exibe exclusivamente a Tela de Renovação / Compra de Licença (Paywall R$ 49,90) com Banner Superior
   if (licenseEval.isExpired) {
     return (
-      <PaywallModal
-        user={activeLicenseUser}
-        onUpgradeSuccess={(updated) => {
-          setActiveLicenseUser(updated);
-          triggerToast('🎉 Licença Anual Ativada com Sucesso (+365 Dias)!');
-        }}
-        onLogout={handleLogout}
-      />
+      <div className="min-h-screen bg-[#05070c] flex flex-col">
+        {/* Banner de Aviso de Teste Terminado no Topo */}
+        <div className="bg-gradient-to-r from-rose-950 via-purple-950 to-rose-950 border-b-2 border-rose-500/50 px-4 py-3.5 flex flex-wrap items-center justify-between text-xs sticky top-0 z-50 backdrop-blur-md shadow-2xl gap-3">
+          <div className="flex items-center gap-2.5 text-rose-200">
+            <div className="w-9 h-9 rounded-xl bg-rose-600/30 border border-rose-500/50 text-rose-300 flex items-center justify-center shrink-0">
+              <Clock className="w-5 h-5 text-amber-300 animate-pulse" />
+            </div>
+            <div>
+              <span className="font-black text-rose-200 uppercase tracking-wide text-xs block">
+                🚨 SEU PERÍODO DE TESTE DE 3 DIAS ENCERROU!
+              </span>
+              <span className="text-slate-300 text-xs">
+                Para continuar utilizando o Clip27 IA sem travas por 1 ano inteiro, ative sua Licença Anual Oficial.
+              </span>
+            </div>
+          </div>
+
+          <a
+            href={ASAAS_ANNUAL_CHECKOUT_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600 hover:from-emerald-400 hover:to-teal-400 text-white font-black text-xs shadow-[0_0_25px_rgba(16,185,129,0.5)] flex items-center gap-2 cursor-pointer transition-all transform hover:scale-105 shrink-0"
+          >
+            <Zap className="w-4 h-4 fill-current text-amber-300" />
+            <span>Comprar Licença Anual no Asaas (R$ 49,90)</span>
+            <ArrowRight className="w-4 h-4" />
+          </a>
+        </div>
+
+        <PaywallModal
+          user={activeLicenseUser}
+          onUpgradeSuccess={(updated) => {
+            setActiveLicenseUser(updated);
+            triggerToast('🎉 Licença Anual Ativada com Sucesso (+365 Dias)!');
+          }}
+          onLogout={handleLogout}
+        />
+      </div>
     );
   }
 
@@ -693,26 +725,42 @@ export default function App() {
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 lg:h-screen lg:overflow-y-auto relative z-10">
         
-        {/* Ticker / Banner Discreto de Período de Teste no Topo */}
+        {/* Banner para Clientes com 3 Dias de Teste (Trial Ativo) */}
         {licenseEval.isTrial && (
-          <div className="bg-gradient-to-r from-purple-950/90 via-fuchsia-950/80 to-purple-950/90 border-b border-fuchsia-500/30 px-4 py-2.5 flex flex-wrap items-center justify-between text-xs sticky top-0 z-20 backdrop-blur-md shadow-md gap-2">
-            <div className="flex items-center gap-2 text-fuchsia-200">
-              <Clock className="w-4 h-4 text-amber-300 shrink-0 animate-pulse" />
-              <span>
-                <strong>Período de Teste Gratuito:</strong> restam{' '}
-                <span className="text-amber-300 font-bold font-mono">
-                  {licenseEval.daysRemaining > 1 ? `${licenseEval.daysRemaining} dias` : `${licenseEval.hoursRemaining} horas`}
+          <div className="bg-gradient-to-r from-purple-950/95 via-fuchsia-950/90 to-purple-950/95 border-b border-fuchsia-500/40 px-4 py-3 flex flex-wrap items-center justify-between text-xs sticky top-0 z-30 backdrop-blur-md shadow-lg gap-3">
+            <div className="flex items-center gap-2.5 text-fuchsia-200">
+              <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-300 shrink-0">
+                <Clock className="w-4 h-4 animate-pulse" />
+              </div>
+              <div>
+                <span className="font-extrabold text-amber-300 uppercase tracking-wide text-[11px] block">
+                  Período de Teste Grátis de 3 Dias Ativo:
                 </span>
-                . Aproveite todas as ferramentas sem travas!
-              </span>
+                <span className="text-slate-200 text-xs">
+                  Restam <strong className="text-amber-300 font-mono">{licenseEval.daysRemaining > 1 ? `${licenseEval.daysRemaining} dias` : `${licenseEval.hoursRemaining} horas`}</strong> para o seu teste encerrar. Garanta sua licença anual e continue sem interrupções!
+                </span>
+              </div>
             </div>
-            <button
-              onClick={() => setIsPaywallOpen(true)}
-              className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white font-bold text-[11px] shadow-sm flex items-center gap-1.5 cursor-pointer transition-all transform hover:scale-105"
-            >
-              <Zap className="w-3.5 h-3.5 fill-current" />
-              <span>Ativar Licença Anual (R$ 49,90)</span>
-            </button>
+
+            <div className="flex items-center gap-2">
+              <a
+                href={ASAAS_ANNUAL_CHECKOUT_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white font-black text-xs shadow-[0_0_20px_rgba(16,185,129,0.4)] flex items-center gap-1.5 cursor-pointer transition-all transform hover:scale-105 shrink-0"
+              >
+                <Zap className="w-3.5 h-3.5 fill-current text-amber-300" />
+                <span>Comprar Licença Anual (R$ 49,90)</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </a>
+
+              <button
+                onClick={() => setIsPaywallOpen(true)}
+                className="px-3 py-2 rounded-xl bg-purple-950/60 hover:bg-purple-900/80 text-purple-200 text-xs font-bold border border-purple-500/30 transition-all cursor-pointer"
+              >
+                Detalhes
+              </button>
+            </div>
           </div>
         )}
 

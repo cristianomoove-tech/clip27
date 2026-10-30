@@ -18,6 +18,7 @@ import {
 import { UsuarioLicenca } from '../types';
 import { 
   LICENSE_ANNUAL_PRICE, 
+  ASAAS_ANNUAL_CHECKOUT_URL,
   buildWhatsAppBillingLink, 
   selfUpgradeToAnnual 
 } from '../services/licensingService';
@@ -144,26 +145,50 @@ export const PaywallModal: React.FC<PaywallModalProps> = ({
             </div>
 
             {/* Pricing Action Box */}
-            <div className="p-5 rounded-2xl bg-gradient-to-r from-purple-900/40 via-fuchsia-900/40 to-pink-900/40 border border-fuchsia-500/40 flex flex-col sm:flex-row items-center justify-between gap-4 mb-5">
+            <div className="p-5 rounded-2xl bg-gradient-to-r from-purple-900/40 via-fuchsia-900/40 to-pink-900/40 border border-fuchsia-500/40 flex flex-col sm:flex-row items-center justify-between gap-4 mb-3">
               <div>
                 <div className="text-[10px] uppercase font-mono font-bold text-fuchsia-300">
-                  Plano Anual Oficial
+                  Plano Anual Oficial Asaas
                 </div>
                 <div className="flex items-baseline gap-2">
                   <span className="text-3xl font-black text-white">R$ 49,90</span>
                   <span className="text-xs text-slate-300 font-medium">/ 1 ano inteiro de acesso</span>
                 </div>
                 <p className="text-[11px] text-slate-400 mt-0.5">
-                  Equivalente a menos de R$ 4,15 por mês.
+                  Pix, Cartão de Crédito ou Boleto com liberação imediata.
                 </p>
               </div>
 
-              <button
-                onClick={() => setShowCheckout(true)}
-                className="w-full sm:w-auto px-6 py-3.5 rounded-xl font-extrabold text-sm text-white bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 shadow-[0_0_25px_rgba(16,185,129,0.4)] flex items-center justify-center gap-2 cursor-pointer transition-all transform hover:scale-[1.02]"
+              <a
+                href={ASAAS_ANNUAL_CHECKOUT_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full sm:w-auto px-6 py-4 rounded-xl font-black text-sm text-white bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600 hover:from-emerald-400 hover:to-teal-400 shadow-[0_0_30px_rgba(16,185,129,0.5)] flex items-center justify-center gap-2 cursor-pointer transition-all transform hover:scale-[1.03] text-center"
               >
-                <Zap className="w-4 h-4 fill-current" />
-                <span>Ativar Licença Anual — R$ 49,90</span>
+                <Zap className="w-4 h-4 fill-current text-amber-300" />
+                <span>Comprar no Asaas (R$ 49,90)</span>
+                <ArrowRight className="w-4 h-4" />
+              </a>
+            </div>
+
+            {/* Alternative Actions: Pix Direto & Auto-Liberação */}
+            <div className="flex flex-wrap items-center justify-center gap-3 py-2 text-xs mb-3">
+              <button
+                type="button"
+                onClick={() => setShowCheckout(true)}
+                className="text-fuchsia-300 hover:text-white underline font-medium cursor-pointer"
+              >
+                Pagar via Pix direto com Copia e Cola
+              </button>
+              <span className="text-slate-600">•</span>
+              <button
+                type="button"
+                onClick={handleConfirmPayment}
+                disabled={isProcessing}
+                className="text-emerald-400 hover:text-emerald-300 font-bold cursor-pointer flex items-center gap-1.5"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>{isProcessing ? 'Verificando...' : 'Já paguei no Asaas / Liberar Acesso'}</span>
               </button>
             </div>
 
@@ -218,6 +243,20 @@ export const PaywallModal: React.FC<PaywallModalProps> = ({
                 <span>Beneficiário: Clip27 Tecnologia</span>
                 <span className="text-white font-bold font-mono">Valor: R$ 49,90</span>
               </div>
+            </div>
+
+            {/* Direct Asaas Link */}
+            <div className="mb-4">
+              <a
+                href={ASAAS_ANNUAL_CHECKOUT_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full py-3.5 px-4 rounded-xl font-bold text-xs text-white bg-gradient-to-r from-purple-600 via-fuchsia-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all"
+              >
+                <Zap className="w-4 h-4 fill-current text-amber-300" />
+                <span>Pagar no Checkout Oficial Asaas (Cartão de Crédito ou Pix)</span>
+                <ArrowRight className="w-4 h-4" />
+              </a>
             </div>
 
             {/* Confirm & Liberate Button */}

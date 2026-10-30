@@ -24,6 +24,7 @@ import {
   drawCreativeFrame,
   renderSingleVariationToBlob,
   renderHighImpactCoverToPngBlob,
+  renderHighImpactCoverCanvas,
 } from '../services/videoRenderer';
 import { getClipBlobUrl, getClipFirstFrameDataUrl } from '../services/clipStore';
 import {
@@ -84,6 +85,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   const hookVideoRef = useRef<HTMLVideoElement | null>(null);
   const bodyVideoRef = useRef<HTMLVideoElement | null>(null);
   const ctaVideoRef = useRef<HTMLVideoElement | null>(null);
+  const coverCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Animation frame reference
   const animationFrameRef = useRef<number | null>(null);
@@ -101,6 +103,19 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   const hookTrimStart = activeVariation?.hookClip?.trimStart || 0;
   const bodyTrimStart = activeVariation?.bodyClip?.trimStart || 0;
   const ctaTrimStart = activeVariation?.ctaClip?.trimStart || 0;
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!activeVariation) return;
+    renderHighImpactCoverCanvas(activeVariation).then((cvs) => {
+      if (!cancelled) {
+        coverCanvasRef.current = cvs;
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeVariation]);
 
   const stopActiveAudioSource = () => {
     if (activeSourceRef.current) {
@@ -344,17 +359,21 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
       if (canvas) {
         const ctx = canvas.getContext('2d');
         if (ctx) {
-          drawCreativeFrame(
-            ctx,
-            activeVariation,
-            t * speed,
-            hVideo,
-            bVideo,
-            cVideo,
-            {
-              isExporting: false,
-            }
-          );
+          if (t === 0 && !isPlaying && coverCanvasRef.current) {
+            ctx.drawImage(coverCanvasRef.current, 0, 0, 540, 960);
+          } else {
+            drawCreativeFrame(
+              ctx,
+              activeVariation,
+              t * speed,
+              hVideo,
+              bVideo,
+              cVideo,
+              {
+                isExporting: false,
+              }
+            );
+          }
         }
       }
 
@@ -489,18 +508,15 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
       const safeCode = activeVariation.code.replace(/\+/g, '-');
       const hash = activeVariation.microEdit?.hashHex || 'CLEAN';
 
-      const [videoBlob, coverBlob] = await Promise.all([
-        renderSingleVariationToBlob(
-          activeVariation,
-          (p) => {
-            setRecordProgress(p);
-          },
-          isNormalizationEnabled
-        ),
-        renderHighImpactCoverToPngBlob(activeVariation),
-      ]);
+      const videoBlob = await renderSingleVariationToBlob(
+        activeVariation,
+        (p) => {
+          setRecordProgress(p);
+        },
+        isNormalizationEnabled
+      );
 
-      // 1. Download clean MP4 video with mastered audio
+      // Download MP4 video with mastered audio and High-Impact Cover embedded as 1st frame
       const videoUrl = URL.createObjectURL(videoBlob);
       const videoLink = document.createElement('a');
       videoLink.href = videoUrl;
@@ -510,22 +526,10 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
       document.body.removeChild(videoLink);
       URL.revokeObjectURL(videoUrl);
 
-      // 2. Download the High-Impact Cover PNG alongside the video
-      setTimeout(() => {
-        const coverUrl = URL.createObjectURL(coverBlob);
-        const coverLink = document.createElement('a');
-        coverLink.href = coverUrl;
-        coverLink.download = `CAPA_${safeCode}_${hash}.png`;
-        document.body.appendChild(coverLink);
-        coverLink.click();
-        document.body.removeChild(coverLink);
-        URL.revokeObjectURL(coverUrl);
-      }, 250);
-
       setDownloadSuccess(true);
       setTimeout(() => setDownloadSuccess(false), 4000);
     } catch (err) {
-      console.error('Erro na gravação do vídeo .MP4 e Capa:', err);
+      console.error('Erro na gravação do vídeo .MP4:', err);
     } finally {
       setIsRecording(false);
     }
@@ -999,17 +1003,17 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                 {isRecording ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>Renderizando Vídeo MP4 + Capa PNG ({recordProgress}%)...</span>
+                    <span>Renderizando Vídeo MP4 (Capa no 1º frame) ({recordProgress}%)...</span>
                   </>
                 ) : downloadSuccess ? (
                   <>
                     <Check className="w-4 h-4 text-emerald-300" />
-                    <span>Vídeo MP4 + Capa PNG Baixados com Sucesso!</span>
+                    <span>Vídeo MP4 com Capa Embutida Baixado com Sucesso!</span>
                   </>
                 ) : (
                   <>
                     <Download className="w-4 h-4" />
-                    <span>Baixar Vídeo (.MP4) + Capa de Alto Impacto (.PNG)</span>
+                    <span>Baixar Vídeo (.MP4 com Capa Embutida)</span>
                   </>
                 )}
               </button>
@@ -1023,13 +1027,13 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                   className="w-full py-2 px-4 rounded-xl font-bold text-xs text-purple-200 bg-purple-950/40 hover:bg-purple-900/60 border border-purple-500/30 flex items-center justify-center gap-2 transition-all cursor-pointer"
                 >
                   <FolderArchive className="w-3.5 h-3.5 text-fuchsia-400" />
-                  <span>Baixar Todos os {totalVariationsCount} Vídeos + {totalVariationsCount} Capas (.ZIP)</span>
+                  <span>Baixar Todos os {totalVariationsCount} Vídeos (.ZIP)</span>
                 </button>
               )}
 
               <div className="flex items-center justify-center gap-1.5 text-[10px] text-slate-400 pt-0.5">
                 <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Áudio Masterizado 320kbps (-14 LUFS) + Capa PNG inclusa no download</span>
+                <span>Áudio Masterizado 320kbps (-14 LUFS) · Capa de alto impacto já embutida no 1º frame do MP4</span>
               </div>
             </div>
           </div>
