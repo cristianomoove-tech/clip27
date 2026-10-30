@@ -107,7 +107,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   useEffect(() => {
     let cancelled = false;
     if (!activeVariation) return;
-    renderHighImpactCoverCanvas(activeVariation).then((cvs) => {
+    renderHighImpactCoverCanvas(activeVariation, null, 540, 960).then((cvs) => {
       if (!cancelled) {
         coverCanvasRef.current = cvs;
       }
@@ -375,7 +375,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
         const ctx = canvas.getContext('2d');
         if (ctx) {
           if (t === 0 && !isPlaying && coverCanvasRef.current) {
-            ctx.drawImage(coverCanvasRef.current, 0, 0, 540, 960);
+            ctx.drawImage(coverCanvasRef.current, 0, 0, canvas.width, canvas.height);
           } else {
             drawCreativeFrame(
               ctx,

@@ -105,9 +105,12 @@ export async function exportVariationsToZip(
         });
       }
 
-      const coverBlob = await renderHighImpactCoverToPngBlob(variation);
+      const coverBlob = await renderHighImpactCoverToPngBlob(variation, 1080, 1920);
       const coverFileName = `CAPA_${safeCode}_${hash}.png`;
       folder.file(coverFileName, coverBlob);
+
+      // Micro-pause to allow browser GC to reclaim freed GPU/VRAM memory between video variations
+      await new Promise((r) => setTimeout(r, 60));
     } catch (err) {
       console.warn(`Erro ao renderizar variação ${code}, pulando:`, err);
     }

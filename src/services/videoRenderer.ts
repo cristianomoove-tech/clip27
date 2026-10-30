@@ -33,8 +33,8 @@ export function drawCreativeFrame(
   ctaVideoEl?: HTMLVideoElement | null,
   _options?: DrawFrameOptions
 ) {
-  const width = 540;
-  const height = 960;
+  const width = ctx.canvas.width || 1080;
+  const height = ctx.canvas.height || 1920;
 
   const hookDur = variation.hookClip?.duration || 4.0;
   const bodyDur = variation.bodyClip?.duration || 7.0;
@@ -87,8 +87,8 @@ export function drawCreativeFrame(
   let drewRealVideo = false;
   if (hasRealVideo && activeVideoEl) {
     try {
-      const vWidth = activeVideoEl.videoWidth || 540;
-      const vHeight = activeVideoEl.videoHeight || 960;
+      const vWidth = activeVideoEl.videoWidth || width;
+      const vHeight = activeVideoEl.videoHeight || height;
 
       // Scale to cover 9:16 vertical frame preserving aspect ratio
       const scale = Math.max(width / vWidth, height / vHeight);
@@ -97,6 +97,8 @@ export function drawCreativeFrame(
       const drawX = (width - drawW) / 2;
       const drawY = (height - drawH) / 2;
 
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(activeVideoEl, drawX, drawY, drawW, drawH);
 
       // Fast hardware-accelerated micro-edit lighting without expensive SVG filters
@@ -405,11 +407,6 @@ export async function renderSingleVariationToBlob(
   onProgress?: (percent: number) => void,
   enableNormalization: boolean = true
 ): Promise<Blob> {
-  const canvas = document.createElement('canvas');
-  canvas.width = 540;
-  canvas.height = 960;
-  const ctx = canvas.getContext('2d')!;
-
   const hookUrl =
     variation.hookClip?.fileUrl ||
     getClipBlobUrl(variation.hookClip?.id) ||
@@ -434,8 +431,39 @@ export async function renderSingleVariationToBlob(
     createVideoElement(ctaUrl, false, ctaTrimStart),
   ]);
 
-  // Pre-render the High-Impact Cover Canvas to place it as the 1st frame of the final MP4 video
-  const coverCanvas = await renderHighImpactCoverCanvas(variation, hookVideo);
+  // Determine native high quality from source clips (default Full HD 1080x1920 for maximum sharpness)
+  const maxSrcW = Math.max(
+    hookVideo?.videoWidth || 0,
+    bodyVideo?.videoWidth || 0,
+    ctaVideo?.videoWidth || 0
+  );
+  const maxSrcH = Math.max(
+    hookVideo?.videoHeight || 0,
+    bodyVideo?.videoHeight || 0,
+    ctaVideo?.videoHeight || 0
+  );
+
+  let exportWidth = 1080;
+  let exportHeight = 1920;
+  if (maxSrcW > 0 && maxSrcH > 0 && maxSrcW < 720 && maxSrcH < 1280) {
+    exportWidth = 720;
+    exportHeight = 1280;
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = exportWidth;
+  canvas.height = exportHeight;
+  const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true })!;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+
+  // Pre-render the High-Impact Cover Canvas at native high-definition dimensions
+  const coverCanvas = await renderHighImpactCoverCanvas(
+    variation,
+    hookVideo,
+    exportWidth,
+    exportHeight
+  );
 
   // Paint the cover IMMEDIATELY onto the recording canvas so frame 0 is guaranteed to be the cover
   ctx.drawImage(coverCanvas, 0, 0, canvas.width, canvas.height);
@@ -481,9 +509,11 @@ export async function renderSingleVariationToBlob(
 
   const format = detectOptimalVideoFormat();
 
+  // 8.5 Mbps for 1080p Full HD ensures professional broadcast sharpness
+  const videoBitrate = exportWidth >= 1080 ? 8500000 : 5000000;
   const recorder = new MediaRecorder(stream, {
     mimeType: format.mimeType,
-    videoBitsPerSecond: 6000000,
+    videoBitsPerSecond: videoBitrate,
     audioBitsPerSecond: 320000,
   });
 
@@ -501,6 +531,19 @@ export async function renderSingleVariationToBlob(
     let ctaActive = false;
     let lastProgressTime = 0;
     let lastReportedPct = -1;
+
+    const cleanupVideos = () => {
+      [hookVideo, bodyVideo, ctaVideo].forEach((v) => {
+        if (v) {
+          try {
+            v.pause();
+            v.src = '';
+            v.load(); // Forces immediate release of GPU hardware decoder context
+          } catch {}
+          if (v.parentNode) v.parentNode.removeChild(v);
+        }
+      });
+    };
 
     // Pre-roll hook video so the first real motion frame is decoded and ready
     if (hookVideo) {
@@ -523,12 +566,7 @@ export async function renderSingleVariationToBlob(
       if (audioGraph) {
         audioGraph.stopPlayback();
       }
-      [hookVideo, bodyVideo, ctaVideo].forEach((v) => {
-        if (v) {
-          try { v.pause(); } catch {}
-          if (v.parentNode) v.parentNode.removeChild(v);
-        }
-      });
+      cleanupVideos();
       resolve(new Blob(chunks, { type: 'video/mp4' }));
     };
 
@@ -539,9 +577,7 @@ export async function renderSingleVariationToBlob(
       if (audioGraph) {
         audioGraph.stopPlayback();
       }
-      [hookVideo, bodyVideo, ctaVideo].forEach((v) => {
-        if (v && v.parentNode) v.parentNode.removeChild(v);
-      });
+      cleanupVideos();
       reject(e);
     };
 
@@ -671,17 +707,23 @@ function loadImageElement(src: string): Promise<HTMLImageElement | null> {
  * Generates a high-impact 9:16 Cover Canvas with the exact FIRST FRAME of the Hook video
  * as the background, overlaid with the High-Impact Cover Title + Badge.
  * Used both for the initial frame of the MP4 video and for the PNG export.
+ * Supports native high-definition resolution (1080x1920 Full HD or responsive preview).
  */
 export async function renderHighImpactCoverCanvas(
   variation: CreativeVariation,
-  preloadedHookVideo?: HTMLVideoElement | null
+  preloadedHookVideo?: HTMLVideoElement | null,
+  targetWidth: number = 1080,
+  targetHeight: number = 1920
 ): Promise<HTMLCanvasElement> {
-  const width = 540;
-  const height = 960;
+  const width = targetWidth;
+  const height = targetHeight;
+  const s = width / 540; // Proportional scale factor for typography & UI geometry
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext('2d')!;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
 
   const hookClip = variation.hookClip;
   let drewHookFirstFrame = false;
@@ -692,8 +734,8 @@ export async function renderHighImpactCoverCanvas(
     (preloadedHookVideo.videoWidth > 0 || preloadedHookVideo.readyState >= 2)
   ) {
     try {
-      const vWidth = preloadedHookVideo.videoWidth || 540;
-      const vHeight = preloadedHookVideo.videoHeight || 960;
+      const vWidth = preloadedHookVideo.videoWidth || width;
+      const vHeight = preloadedHookVideo.videoHeight || height;
       const scale = Math.max(width / vWidth, height / vHeight);
       const drawW = vWidth * scale;
       const drawH = vHeight * scale;
@@ -766,8 +808,15 @@ export async function renderHighImpactCoverCanvas(
           drewHookFirstFrame = true;
         } catch {}
       }
-      if (hookVideo && hookVideo.parentNode) {
-        hookVideo.parentNode.removeChild(hookVideo);
+      if (hookVideo) {
+        try {
+          hookVideo.pause();
+          hookVideo.src = '';
+          hookVideo.load();
+        } catch {}
+        if (hookVideo.parentNode) {
+          hookVideo.parentNode.removeChild(hookVideo);
+        }
       }
     }
   }
@@ -786,28 +835,28 @@ export async function renderHighImpactCoverCanvas(
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, width, height);
 
-  // 6. Top Badge Pill
+  // 6. Top Badge Pill (Scales with s)
   const badgeText = (variation.coverBadge || '🚨 ALERTA DE COMPRA').split('·')[0].trim();
   ctx.save();
-  ctx.font = '900 18px Inter, system-ui, sans-serif';
+  ctx.font = `900 ${Math.round(18 * s)}px Inter, system-ui, sans-serif`;
   const badgeMetrics = ctx.measureText(badgeText);
-  const badgeW = Math.min(width - 60, badgeMetrics.width + 38);
-  const badgeH = 40;
+  const badgeW = Math.min(width - 60 * s, badgeMetrics.width + 38 * s);
+  const badgeH = 40 * s;
   const badgeX = (width - badgeW) / 2;
-  const badgeY = 170;
+  const badgeY = 170 * s;
 
   ctx.fillStyle = '#e11d48';
   ctx.beginPath();
-  ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 12);
+  ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 12 * s);
   ctx.fill();
 
   ctx.fillStyle = '#ffffff';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(badgeText, width / 2, badgeY + badgeH / 2 + 1);
+  ctx.fillText(badgeText, width / 2, badgeY + badgeH / 2 + 1 * s);
   ctx.restore();
 
-  // 7. High-Impact Main Cover Title (Wrapped with semi-transparent glass box so the Hook image shines through)
+  // 7. High-Impact Main Cover Title (Wrapped with semi-transparent glass box)
   const titleText = (
     variation.coverTitle ||
     variation.headline ||
@@ -815,14 +864,14 @@ export async function renderHighImpactCoverCanvas(
   ).toUpperCase();
 
   ctx.save();
-  ctx.font = '900 35px Inter, system-ui, sans-serif';
+  ctx.font = `900 ${Math.round(35 * s)}px Inter, system-ui, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
   const words = titleText.split(/\s+/);
   const lines: string[] = [];
   let currentLine = '';
-  const maxLineWidth = width - 76;
+  const maxLineWidth = width - 76 * s;
 
   for (const word of words) {
     const testLine = currentLine ? `${currentLine} ${word}` : word;
@@ -835,23 +884,23 @@ export async function renderHighImpactCoverCanvas(
   }
   if (currentLine) lines.push(currentLine);
 
-  const lineHeight = 46;
-  const blockHeight = lines.length * lineHeight + 34;
-  const blockY = 225;
+  const lineHeight = 46 * s;
+  const blockHeight = lines.length * lineHeight + 34 * s;
+  const blockY = 225 * s;
 
   // Semi-transparent backing card so the Hook's first frame stays visible behind & below
   ctx.fillStyle = 'rgba(15, 23, 42, 0.72)';
   ctx.strokeStyle = '#facc15';
-  ctx.lineWidth = 3;
+  ctx.lineWidth = 3 * s;
   ctx.beginPath();
-  ctx.roundRect(28, blockY, width - 56, blockHeight, 20);
+  ctx.roundRect(28 * s, blockY, width - 56 * s, blockHeight, 20 * s);
   ctx.fill();
   ctx.stroke();
 
   lines.forEach((line, i) => {
-    const y = blockY + 23 + i * lineHeight + lineHeight / 2 - 8;
+    const y = blockY + 23 * s + i * lineHeight + lineHeight / 2 - 8 * s;
     ctx.strokeStyle = '#000000';
-    ctx.lineWidth = 7;
+    ctx.lineWidth = 7 * s;
     ctx.lineJoin = 'round';
     ctx.strokeText(line, width / 2, y);
     ctx.fillStyle = i % 2 === 0 ? '#fde047' : '#ffffff';
@@ -867,9 +916,11 @@ export async function renderHighImpactCoverCanvas(
  * as the background, overlaid with the High-Impact Cover Title + Badge.
  */
 export async function renderHighImpactCoverToPngBlob(
-  variation: CreativeVariation
+  variation: CreativeVariation,
+  targetWidth: number = 1080,
+  targetHeight: number = 1920
 ): Promise<Blob> {
-  const canvas = await renderHighImpactCoverCanvas(variation);
+  const canvas = await renderHighImpactCoverCanvas(variation, null, targetWidth, targetHeight);
   return new Promise((resolve) => {
     canvas.toBlob((blob) => {
       resolve(blob || new Blob([], { type: 'image/png' }));
