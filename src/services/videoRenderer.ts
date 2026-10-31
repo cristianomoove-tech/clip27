@@ -106,11 +106,11 @@ export function drawCreativeFrame(
         const diff = brightness - 1;
         ctx.save();
         if (diff > 0) {
-          ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(0.08, diff.toFixed(3))})`;
+          ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(0.08, diff).toFixed(3)})`;
           ctx.globalCompositeOperation = 'screen';
           ctx.fillRect(drawX, drawY, drawW, drawH);
         } else {
-          ctx.fillStyle = `rgba(0, 0, 0, ${Math.min(0.08, (-diff).toFixed(3))})`;
+          ctx.fillStyle = `rgba(0, 0, 0, ${Math.min(0.08, -diff).toFixed(3)})`;
           ctx.globalCompositeOperation = 'multiply';
           ctx.fillRect(drawX, drawY, drawW, drawH);
         }
@@ -431,24 +431,10 @@ export async function renderSingleVariationToBlob(
     createVideoElement(ctaUrl, false, ctaTrimStart),
   ]);
 
-  // Determine native high quality from source clips (default Full HD 1080x1920 for maximum sharpness)
-  const maxSrcW = Math.max(
-    hookVideo?.videoWidth || 0,
-    bodyVideo?.videoWidth || 0,
-    ctaVideo?.videoWidth || 0
-  );
-  const maxSrcH = Math.max(
-    hookVideo?.videoHeight || 0,
-    bodyVideo?.videoHeight || 0,
-    ctaVideo?.videoHeight || 0
-  );
-
-  let exportWidth = 1080;
-  let exportHeight = 1920;
-  if (maxSrcW > 0 && maxSrcH > 0 && maxSrcW < 720 && maxSrcH < 1280) {
-    exportWidth = 720;
-    exportHeight = 1280;
-  }
+  // 720p Vertical HD (720x1280) - Ideal standard for mobile platforms (TikTok, Reels, Shorts)
+  // Perfectly balanced: high quality, crisp clarity, yet lightweight so the browser never drops frames
+  const exportWidth = 720;
+  const exportHeight = 1280;
 
   const canvas = document.createElement('canvas');
   canvas.width = exportWidth;
@@ -457,7 +443,7 @@ export async function renderSingleVariationToBlob(
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
 
-  // Pre-render the High-Impact Cover Canvas at native high-definition dimensions
+  // Pre-render the High-Impact Cover Canvas at 720p HD
   const coverCanvas = await renderHighImpactCoverCanvas(
     variation,
     hookVideo,
@@ -509,8 +495,8 @@ export async function renderSingleVariationToBlob(
 
   const format = detectOptimalVideoFormat();
 
-  // 8.5 Mbps for 1080p Full HD ensures professional broadcast sharpness
-  const videoBitrate = exportWidth >= 1080 ? 8500000 : 5000000;
+  // 3.5 Mbps for 720p vertical video provides pristine broadcast quality without dropping frames
+  const videoBitrate = 3500000;
   const recorder = new MediaRecorder(stream, {
     mimeType: format.mimeType,
     videoBitsPerSecond: videoBitrate,
@@ -525,10 +511,7 @@ export async function renderSingleVariationToBlob(
   return new Promise(async (resolve, reject) => {
     let animId: number;
     let isStopped = false;
-    let bodyPreRolled = false;
-    let ctaPreRolled = false;
-    let bodyActive = false;
-    let ctaActive = false;
+    let currentSegment: 'cover' | 'hook' | 'body' | 'cta' = 'cover';
     let lastProgressTime = 0;
     let lastReportedPct = -1;
 
@@ -544,20 +527,6 @@ export async function renderSingleVariationToBlob(
         }
       });
     };
-
-    // Pre-roll hook video so the first real motion frame is decoded and ready
-    if (hookVideo) {
-      hookVideo.playbackRate = speed;
-      try {
-        await hookVideo.play();
-      } catch {}
-    }
-
-    // Audio starts at exact hardware audio clock
-    const audioStartTime = audioCtx.currentTime;
-    if (audioGraph) {
-      audioGraph.startPlayback(audioStartTime);
-    }
 
     recorder.onstop = () => {
       if (isStopped) return;
@@ -599,68 +568,42 @@ export async function renderSingleVariationToBlob(
         const videoTime = (t - COVER_DURATION) * speed;
 
         if (t < COVER_DURATION + hookDur) {
-          // Pre-roll body video 120ms before hook ends so its decoder is warm and avoids 250ms seek lag
-          if (!bodyPreRolled && bodyVideo && t >= COVER_DURATION + hookDur - 0.12) {
-            bodyPreRolled = true;
-            bodyVideo.playbackRate = speed;
-            bodyVideo.play().catch(() => {});
-          }
-
-          // Dynamic drift correction for Hook video to stay locked with audio
-          if (hookVideo && !hookVideo.paused) {
-            const targetTime = hookTrimStart + (t - COVER_DURATION) * speed;
-            const drift = hookVideo.currentTime - targetTime;
-            if (Math.abs(drift) > 0.05) {
-              hookVideo.playbackRate = drift < 0 ? speed * 1.05 : speed * 0.95;
-            } else {
+          if (currentSegment !== 'hook') {
+            currentSegment = 'hook';
+            if (bodyVideo && !bodyVideo.paused) bodyVideo.pause();
+            if (ctaVideo && !ctaVideo.paused) ctaVideo.pause();
+            if (hookVideo) {
               hookVideo.playbackRate = speed;
+              hookVideo.play().catch(() => {});
+            }
+            if (audioGraph) {
+              audioGraph.setActiveSegment('hook');
             }
           }
         } else if (t < COVER_DURATION + hookDur + bodyDur) {
-          if (!bodyActive) {
-            bodyActive = true;
+          if (currentSegment !== 'body') {
+            currentSegment = 'body';
             if (hookVideo && !hookVideo.paused) hookVideo.pause();
-            if (bodyVideo && bodyVideo.paused) {
+            if (ctaVideo && !ctaVideo.paused) ctaVideo.pause();
+            if (bodyVideo) {
               bodyVideo.playbackRate = speed;
               bodyVideo.play().catch(() => {});
             }
-          }
-
-          // Pre-roll CTA video 120ms before body ends
-          if (!ctaPreRolled && ctaVideo && t >= COVER_DURATION + hookDur + bodyDur - 0.12) {
-            ctaPreRolled = true;
-            ctaVideo.playbackRate = speed;
-            ctaVideo.play().catch(() => {});
-          }
-
-          // Dynamic drift correction for Body video to stay locked with audio
-          if (bodyVideo && !bodyVideo.paused) {
-            const targetTime = bodyTrimStart + (t - COVER_DURATION - hookDur) * speed;
-            const drift = bodyVideo.currentTime - targetTime;
-            if (Math.abs(drift) > 0.05) {
-              bodyVideo.playbackRate = drift < 0 ? speed * 1.05 : speed * 0.95;
-            } else {
-              bodyVideo.playbackRate = speed;
+            if (audioGraph) {
+              audioGraph.setActiveSegment('body');
             }
           }
         } else {
-          if (!ctaActive) {
-            ctaActive = true;
+          if (currentSegment !== 'cta') {
+            currentSegment = 'cta';
+            if (hookVideo && !hookVideo.paused) hookVideo.pause();
             if (bodyVideo && !bodyVideo.paused) bodyVideo.pause();
-            if (ctaVideo && ctaVideo.paused) {
+            if (ctaVideo) {
               ctaVideo.playbackRate = speed;
               ctaVideo.play().catch(() => {});
             }
-          }
-
-          // Dynamic drift correction for CTA video to stay locked with audio
-          if (ctaVideo && !ctaVideo.paused) {
-            const targetTime = ctaTrimStart + (t - COVER_DURATION - hookDur - bodyDur) * speed;
-            const drift = ctaVideo.currentTime - targetTime;
-            if (Math.abs(drift) > 0.05) {
-              ctaVideo.playbackRate = drift < 0 ? speed * 1.05 : speed * 0.95;
-            } else {
-              ctaVideo.playbackRate = speed;
+            if (audioGraph) {
+              audioGraph.setActiveSegment('cta');
             }
           }
         }
@@ -712,8 +655,8 @@ function loadImageElement(src: string): Promise<HTMLImageElement | null> {
 export async function renderHighImpactCoverCanvas(
   variation: CreativeVariation,
   preloadedHookVideo?: HTMLVideoElement | null,
-  targetWidth: number = 1080,
-  targetHeight: number = 1920
+  targetWidth: number = 720,
+  targetHeight: number = 1280
 ): Promise<HTMLCanvasElement> {
   const width = targetWidth;
   const height = targetHeight;
@@ -917,8 +860,8 @@ export async function renderHighImpactCoverCanvas(
  */
 export async function renderHighImpactCoverToPngBlob(
   variation: CreativeVariation,
-  targetWidth: number = 1080,
-  targetHeight: number = 1920
+  targetWidth: number = 720,
+  targetHeight: number = 1280
 ): Promise<Blob> {
   const canvas = await renderHighImpactCoverCanvas(variation, null, targetWidth, targetHeight);
   return new Promise((resolve) => {

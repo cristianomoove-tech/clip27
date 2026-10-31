@@ -105,7 +105,7 @@ export async function exportVariationsToZip(
         });
       }
 
-      const coverBlob = await renderHighImpactCoverToPngBlob(variation, 1080, 1920);
+      const coverBlob = await renderHighImpactCoverToPngBlob(variation, 720, 1280);
       const coverFileName = `CAPA_${safeCode}_${hash}.png`;
       folder.file(coverFileName, coverBlob);
 
@@ -122,11 +122,11 @@ export async function exportVariationsToZip(
     `CLIP27 AI — PACOTE DE VÍDEOS MP4 + CAPAS DE ALTO IMPACTO (.PNG)`,
     `Data de Exportação: ${new Date().toLocaleString('pt-BR')}`,
     `Total Exportado: ${total} Vídeos (.mp4) + ${total} Capas de Alto Impacto (.png)`,
-    `Formato de Saída: MP4 Vertical 9:16 Limpo + Capas PNG 9:16 + Legendas SEO`,
+    `Formato de Saída: MP4 Vertical 9:16 HD 720p (720x1280) + Capas PNG 720p + Legendas SEO`,
     `================================================================\n`,
     `ESTRATÉGIA ANTI-SHADOWBAN & ÁUDIO MASTERIZADO TIKTOK / REELS:`,
-    `- Formato .MP4 nativo 100% limpo pronto para upload direto no TikTok e TikTok Ads.`,
-    `- Capas .PNG 9:16 de Alto Impacto geradas com a 1ª imagem real de cada Gancho.`,
+    `- Formato .MP4 nativo HD 720p 100% fluido a 30 FPS cravados, taxa de 3.5 Mbps otimizada para TikTok e Reels.`,
+    `- Capas .PNG 9:16 HD 720p de Alto Impacto geradas com a 1ª imagem real de cada Gancho.`,
     `- Áudio em 48kHz / 320kbps com equalização vocal, filtro anti-ruído e nivelamento -14 LUFS.`,
     `- Cada vídeo possui fingerprint e hash hexadecimal únicos para quebrar deduplicação.`,
     `- Micro-edits embutidos: Zoom (1.01x a 1.04x), Velocidade (0.98x a 1.02x).\n`,

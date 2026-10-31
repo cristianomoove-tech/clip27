@@ -550,7 +550,12 @@ export async function setupSynchronizedAudioGraph(
       bodyGainNode.gain.setValueAtTime(0, now);
       ctaGainNode.gain.setValueAtTime(0, now);
 
-      if (hookAudio && !hookSource) {
+      if (hookSource) {
+        try { hookSource.stop(); hookSource.disconnect(); } catch {}
+        hookSource = null;
+      }
+
+      if (hookAudio) {
         try {
           const hookOffset = Math.max(
             0,
@@ -574,7 +579,12 @@ export async function setupSynchronizedAudioGraph(
       bodyGainNode.gain.linearRampToValueAtTime(bodyTargetGain, now + fadeTime);
       ctaGainNode.gain.setValueAtTime(0, now);
 
-      if (bodyAudio && !bodySource) {
+      if (bodySource) {
+        try { bodySource.stop(); bodySource.disconnect(); } catch {}
+        bodySource = null;
+      }
+
+      if (bodyAudio) {
         try {
           const bodyOffset = Math.max(
             0,
@@ -598,7 +608,12 @@ export async function setupSynchronizedAudioGraph(
       ctaGainNode.gain.setValueAtTime(0.001, now);
       ctaGainNode.gain.linearRampToValueAtTime(ctaTargetGain, now + fadeTime);
 
-      if (ctaAudio && !ctaSource) {
+      if (ctaSource) {
+        try { ctaSource.stop(); ctaSource.disconnect(); } catch {}
+        ctaSource = null;
+      }
+
+      if (ctaAudio) {
         try {
           const ctaOffset = Math.max(
             0,

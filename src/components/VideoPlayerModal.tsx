@@ -256,22 +256,43 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
         hookVideo.muted = true;
         hookVideo.playbackRate = speed;
         hookVideo.play().catch(() => {});
-        if (!isMuted && buffersRef.current.hook && !activeSourceRef.current) {
-          playSegmentAudio('hook', t);
+        const startHook = () => {
+          if (!isMuted && buffersRef.current.hook && !activeSourceRef.current) {
+            playSegmentAudio('hook', t);
+          }
+        };
+        if (hookVideo.readyState >= 3 && !hookVideo.paused) {
+          startHook();
+        } else {
+          hookVideo.addEventListener('playing', startHook, { once: true });
         }
       } else if (seg === 'body' && bodyVideo) {
         bodyVideo.muted = true;
         bodyVideo.playbackRate = speed;
         bodyVideo.play().catch(() => {});
-        if (!isMuted && buffersRef.current.body && !activeSourceRef.current) {
-          playSegmentAudio('body', Math.max(0, t - hookDur));
+        const startBody = () => {
+          if (!isMuted && buffersRef.current.body && !activeSourceRef.current) {
+            playSegmentAudio('body', Math.max(0, t - hookDur));
+          }
+        };
+        if (bodyVideo.readyState >= 3 && !bodyVideo.paused) {
+          startBody();
+        } else {
+          bodyVideo.addEventListener('playing', startBody, { once: true });
         }
       } else if (seg === 'cta' && ctaVideo) {
         ctaVideo.muted = true;
         ctaVideo.playbackRate = speed;
         ctaVideo.play().catch(() => {});
-        if (!isMuted && buffersRef.current.cta && !activeSourceRef.current) {
-          playSegmentAudio('cta', Math.max(0, t - hookDur - bodyDur));
+        const startCta = () => {
+          if (!isMuted && buffersRef.current.cta && !activeSourceRef.current) {
+            playSegmentAudio('cta', Math.max(0, t - hookDur - bodyDur));
+          }
+        };
+        if (ctaVideo.readyState >= 3 && !ctaVideo.paused) {
+          startCta();
+        } else {
+          ctaVideo.addEventListener('playing', startCta, { once: true });
         }
       }
     }
@@ -294,9 +315,14 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
             }
             h.playbackRate = speed;
             h.play().catch(() => {});
-          }
-          if (!isMuted) {
-            playSegmentAudio('hook', 0);
+            const startHook = () => {
+              if (!isMuted) playSegmentAudio('hook', 0);
+            };
+            if (h.readyState >= 3 && !h.paused) {
+              startHook();
+            } else {
+              h.addEventListener('playing', startHook, { once: true });
+            }
           }
         }
 
@@ -323,10 +349,17 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
               hVideo.currentTime = hookTrimStart;
             }
             hVideo.playbackRate = speed;
-            if (isPlaying) hVideo.play().catch(() => {});
-          }
-          if (!isMuted) {
-            playSegmentAudio('hook', 0);
+            if (isPlaying) {
+              hVideo.play().catch(() => {});
+              const startHookSound = () => {
+                if (!isMuted) playSegmentAudio('hook', 0);
+              };
+              if (hVideo.readyState >= 3 && !hVideo.paused) {
+                startHookSound();
+              } else {
+                hVideo.addEventListener('playing', startHookSound, { once: true });
+              }
+            }
           }
         }
       } else if (t < hookDur + bodyDur) {
@@ -339,10 +372,17 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
               bVideo.currentTime = bodyTrimStart;
             }
             bVideo.playbackRate = speed;
-            if (isPlaying) bVideo.play().catch(() => {});
-          }
-          if (!isMuted) {
-            playSegmentAudio('body', 0);
+            if (isPlaying) {
+              bVideo.play().catch(() => {});
+              const startBodySound = () => {
+                if (!isMuted) playSegmentAudio('body', 0);
+              };
+              if (bVideo.readyState >= 3 && !bVideo.paused) {
+                startBodySound();
+              } else {
+                bVideo.addEventListener('playing', startBodySound, { once: true });
+              }
+            }
           }
         }
       } else {
@@ -355,10 +395,17 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
               cVideo.currentTime = ctaTrimStart;
             }
             cVideo.playbackRate = speed;
-            if (isPlaying) cVideo.play().catch(() => {});
-          }
-          if (!isMuted) {
-            playSegmentAudio('cta', 0);
+            if (isPlaying) {
+              cVideo.play().catch(() => {});
+              const startCtaSound = () => {
+                if (!isMuted) playSegmentAudio('cta', 0);
+              };
+              if (cVideo.readyState >= 3 && !cVideo.paused) {
+                startCtaSound();
+              } else {
+                cVideo.addEventListener('playing', startCtaSound, { once: true });
+              }
+            }
           }
         }
       }
