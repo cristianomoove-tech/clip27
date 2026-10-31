@@ -30,6 +30,8 @@ import {
 import { renderHighImpactCoverToPngBlob } from '../services/videoRenderer';
 import { clearAudioBufferCache } from '../services/audioManager';
 import { BatchDownloadModal } from './BatchDownloadModal';
+import { checkFFmpegServerHealth, uploadClipToFFmpegServer } from '../services/ffmpegApiService';
+import { Cpu, Flame } from 'lucide-react';
 
 interface StudioViewProps {
   project: Project;
@@ -215,14 +217,165 @@ export const StudioView: React.FC<StudioViewProps> = ({
     }
   };
 
-  // File input refs for the 3 columns
+  // File input refs for the 3 columns (bulk) and individual 9 slots
   const hookInputRef = useRef<HTMLInputElement>(null);
   const bodyInputRef = useRef<HTMLInputElement>(null);
   const ctaInputRef = useRef<HTMLInputElement>(null);
+  const slotInputRefs = useRef<{ [key: string]: HTMLInputElement | null }>({});
+
+  const [ffmpegOnline, setFfmpegOnline] = useState<boolean>(false);
+
+  // Verifica status do motor FFmpeg local
+  useEffect(() => {
+    let active = true;
+    const probe = async () => {
+      const st = await checkFFmpegServerHealth();
+      if (active) setFfmpegOnline(st.online);
+    };
+    probe();
+    const interval = setInterval(probe, 8000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, []);
 
   const showNotice = (msg: string) => {
     setUploadNotice(msg);
     setTimeout(() => setUploadNotice(null), 5000);
+  };
+
+  // Upload direto para um slot específico (G1, G2, G3 / C1, C2, C3 / CTA1, CTA2, CTA3)
+  const handleUploadSlot = async (
+    type: 'hook' | 'body' | 'cta',
+    slotIndex: number,
+    file: File
+  ) => {
+    if (!file) return;
+
+    const url = URL.createObjectURL(file);
+    const sizeMb = (file.size / (1024 * 1024)).toFixed(1) + ' MB';
+    const label = type === 'hook' ? 'Gancho' : type === 'body' ? 'Corpo' : 'CTA';
+    const clipId = `user-${type}-${slotIndex + 1}-${Date.now()}`;
+    const defaultDur = type === 'hook' ? 4.0 : type === 'body' ? 7.0 : 3.5;
+
+    const { duration: detectedDuration, thumbnailDataUrl } =
+      await extractVideoFirstFrameAndDuration(url, defaultDur);
+    registerClipBlob(clipId, file, url, detectedDuration, thumbnailDataUrl);
+
+    const newClip: VideoClip = {
+      id: clipId,
+      type,
+      title: `${label} ${slotIndex + 1}: ${file.name.slice(0, 24)}`,
+      duration: detectedDuration,
+      fileUrl: url,
+      fileName: file.name,
+      fileSize: sizeMb,
+      thumbnailDataUrl,
+      colorTheme: type === 'hook' ? '#9333ea' : type === 'body' ? '#2563eb' : '#16a34a',
+    };
+
+    clearAudioBufferCache();
+
+    // Sincroniza em segundo plano com o servidor FFmpeg local se estiver online
+    const tipoBackend = type === 'hook' ? 'gancho' : type === 'body' ? 'corpo' : 'cta';
+    uploadClipToFFmpegServer(file, tipoBackend, (slotIndex + 1) as 1 | 2 | 3).catch(() => {});
+
+    const currentProj = latestProjectRef.current;
+    let updatedHooks = [...currentProj.hooks];
+    let updatedBodies = [...currentProj.bodies];
+    let updatedCtas = [...currentProj.ctas];
+
+    if (type === 'hook') {
+      while (updatedHooks.length <= slotIndex) updatedHooks.push({} as any);
+      updatedHooks[slotIndex] = newClip;
+      updatedHooks = updatedHooks.filter((c) => c && c.id);
+    } else if (type === 'body') {
+      while (updatedBodies.length <= slotIndex) updatedBodies.push({} as any);
+      updatedBodies[slotIndex] = newClip;
+      updatedBodies = updatedBodies.filter((c) => c && c.id);
+    } else {
+      while (updatedCtas.length <= slotIndex) updatedCtas.push({} as any);
+      updatedCtas[slotIndex] = newClip;
+      updatedCtas = updatedCtas.filter((c) => c && c.id);
+    }
+
+    let newVariations = currentProj.generatedVariations;
+    if (updatedHooks.length > 0 && updatedBodies.length > 0 && updatedCtas.length > 0) {
+      newVariations = compileCartesianMatrix(
+        updatedHooks,
+        updatedBodies,
+        updatedCtas,
+        [],
+        currentProj.id,
+        true,
+        'minimal_clean',
+        {
+          productKeyword: productKeywordInput.trim() || currentProj.productKeyword,
+          projectName: currentProj.name,
+        }
+      );
+    }
+
+    updateProjectWithSave({
+      hooks: updatedHooks,
+      bodies: updatedBodies,
+      ctas: updatedCtas,
+      clipsCount: updatedHooks.length + updatedBodies.length + updatedCtas.length,
+      generatedVariations: newVariations,
+      videosGenerated: newVariations.length,
+    });
+
+    const codeLabel = type === 'hook' ? `G${slotIndex + 1}` : type === 'body' ? `C${slotIndex + 1}` : `CTA${slotIndex + 1}`;
+    showNotice(`✓ ${label} ${slotIndex + 1} (${codeLabel}) carregado com sucesso!`);
+  };
+
+  const handleRemoveSlot = (type: 'hook' | 'body' | 'cta', slotIndex: number) => {
+    clearAudioBufferCache();
+    const currentProj = latestProjectRef.current;
+    let updatedHooks = [...currentProj.hooks];
+    let updatedBodies = [...currentProj.bodies];
+    let updatedCtas = [...currentProj.ctas];
+
+    if (type === 'hook') {
+      updatedHooks.splice(slotIndex, 1);
+    } else if (type === 'body') {
+      updatedBodies.splice(slotIndex, 1);
+    } else {
+      updatedCtas.splice(slotIndex, 1);
+    }
+
+    const newVariations =
+      updatedHooks.length > 0 && updatedBodies.length > 0 && updatedCtas.length > 0
+        ? compileCartesianMatrix(
+            updatedHooks,
+            updatedBodies,
+            updatedCtas,
+            [],
+            project.id,
+            true,
+            'minimal_clean',
+            {
+              productKeyword: productKeywordInput.trim() || project.productKeyword,
+              projectName: project.name,
+            }
+          )
+        : [];
+
+    updateProjectWithSave({
+      hooks: updatedHooks,
+      bodies: updatedBodies,
+      ctas: updatedCtas,
+      clipsCount: updatedHooks.length + updatedBodies.length + updatedCtas.length,
+      generatedVariations: newVariations,
+      videosGenerated: newVariations.length,
+    });
+    showNotice('Clipe removido do slot.');
+  };
+
+  const triggerSingleSlotInput = (type: 'hook' | 'body' | 'cta', slotIndex: number) => {
+    const key = `${type}_${slotIndex}`;
+    slotInputRefs.current[key]?.click();
   };
 
   // Automatically backfill first-frame thumbnail for any loaded Hook clip that has a video URL but no thumbnailDataUrl yet
@@ -281,46 +434,72 @@ export const StudioView: React.FC<StudioViewProps> = ({
     };
   }, [project.hooks]);
 
-  // Handle file additions for Hooks, Bodies, and CTAs
+  // Handle file additions for Hooks, Bodies, and CTAs (Bulk or multi-file)
   const handleAddFiles = async (
     files: FileList | null,
-    type: 'hook' | 'body' | 'cta',
-    forceReplace: boolean = false
+    type: 'hook' | 'body' | 'cta'
   ) => {
     if (!files || files.length === 0) return;
 
-    // Ordenação natural dos arquivos (ex: G1, G2, G3 ou 1, 2, 3) para puxar exatamente na ordem correta
-    const sortedFiles = Array.from(files).sort((a, b) =>
-      a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
-    );
-
-    const newClips: VideoClip[] = [];
+    const fileList = Array.from(files);
     const defaultDur = type === 'hook' ? 4.0 : type === 'body' ? 7.0 : 3.5;
+    const label = type === 'hook' ? 'Gancho' : type === 'body' ? 'Corpo' : 'CTA';
+    const tipoBackend = type === 'hook' ? 'gancho' : type === 'body' ? 'corpo' : 'cta';
 
-    for (let i = 0; i < sortedFiles.length; i++) {
-      const file = sortedFiles[i];
+    const currentProj = latestProjectRef.current;
+    let targetSlots: VideoClip[] =
+      type === 'hook'
+        ? [...currentProj.hooks]
+        : type === 'body'
+        ? [...currentProj.bodies]
+        : [...currentProj.ctas];
+
+    // Se a coluna ainda tiver clipes demo, limpamos para dar lugar aos clipes reais
+    if (targetSlots.some(isDemoClip)) {
+      targetSlots = [];
+    }
+
+    for (let i = 0; i < fileList.length; i++) {
+      const file = fileList[i];
       const url = URL.createObjectURL(file);
       const sizeMb = (file.size / (1024 * 1024)).toFixed(1) + ' MB';
-      const label = type === 'hook' ? 'Gancho' : type === 'body' ? 'Corpo' : 'CTA';
-      const clipId = `user-${type}-${Date.now()}-${i}`;
 
+      // Detecta slot inteligente baseado no nome do arquivo (ex: gancho1 -> slot 0, g2 -> slot 1, etc.)
+      let targetSlotIdx = i;
+      const lowerName = file.name.toLowerCase();
+      if (/1|g1|c1|cta1/.test(lowerName)) targetSlotIdx = 0;
+      else if (/2|g2|c2|cta2/.test(lowerName)) targetSlotIdx = 1;
+      else if (/3|g3|c3|cta3/.test(lowerName)) targetSlotIdx = 2;
+      else if (targetSlots.length < 3) targetSlotIdx = targetSlots.length;
+      else targetSlotIdx = i % 3;
+
+      const clipId = `user-${type}-${targetSlotIdx + 1}-${Date.now()}-${i}`;
       const { duration: detectedDuration, thumbnailDataUrl } =
         await extractVideoFirstFrameAndDuration(url, defaultDur);
       registerClipBlob(clipId, file, url, detectedDuration, thumbnailDataUrl);
 
-      newClips.push({
+      const newClip: VideoClip = {
         id: clipId,
         type,
-        title: `${label}: ${file.name.slice(0, 24)}`,
+        title: `${label} ${targetSlotIdx + 1}: ${file.name.slice(0, 24)}`,
         duration: detectedDuration,
         fileUrl: url,
         fileName: file.name,
         fileSize: sizeMb,
         thumbnailDataUrl,
         colorTheme: type === 'hook' ? '#9333ea' : type === 'body' ? '#2563eb' : '#16a34a',
-      });
+      };
+
+      while (targetSlots.length <= targetSlotIdx) {
+        targetSlots.push({} as any);
+      }
+      targetSlots[targetSlotIdx] = newClip;
+
+      // Envia em segundo plano para o backend FFmpeg
+      uploadClipToFFmpegServer(file, tipoBackend, (targetSlotIdx + 1) as 1 | 2 | 3).catch(() => {});
     }
 
+    targetSlots = targetSlots.filter((c) => c && c.id).slice(0, 3);
     clearAudioBufferCache();
 
     // Limpar o valor do input para permitir reenvio dos mesmos arquivos se necessário
@@ -328,27 +507,9 @@ export const StudioView: React.FC<StudioViewProps> = ({
     if (bodyInputRef.current) bodyInputRef.current.value = '';
     if (ctaInputRef.current) ctaInputRef.current.value = '';
 
-    const currentProj = latestProjectRef.current;
-    let updatedHooks = [...currentProj.hooks];
-    let updatedBodies = [...currentProj.bodies];
-    let updatedCtas = [...currentProj.ctas];
-
-    if (type === 'hook') {
-      const hasDemos = currentProj.hooks.some(isDemoClip);
-      const replaceAll = hasDemos || forceReplace || newClips.length >= 3;
-      const nonDemos = currentProj.hooks.filter((c) => !isDemoClip(c));
-      updatedHooks = replaceAll ? newClips.slice(0, 3) : [...nonDemos, ...newClips].slice(-3);
-    } else if (type === 'body') {
-      const hasDemos = currentProj.bodies.some(isDemoClip);
-      const replaceAll = hasDemos || forceReplace || newClips.length >= 3;
-      const nonDemos = currentProj.bodies.filter((c) => !isDemoClip(c));
-      updatedBodies = replaceAll ? newClips.slice(0, 3) : [...nonDemos, ...newClips].slice(-3);
-    } else {
-      const hasDemos = currentProj.ctas.some(isDemoClip);
-      const replaceAll = hasDemos || forceReplace || newClips.length >= 3;
-      const nonDemos = currentProj.ctas.filter((c) => !isDemoClip(c));
-      updatedCtas = replaceAll ? newClips.slice(0, 3) : [...nonDemos, ...newClips].slice(-3);
-    }
+    let updatedHooks = type === 'hook' ? targetSlots : currentProj.hooks;
+    let updatedBodies = type === 'body' ? targetSlots : currentProj.bodies;
+    let updatedCtas = type === 'cta' ? targetSlots : currentProj.ctas;
 
     let newVariations = currentProj.generatedVariations;
     if (updatedHooks.length > 0 && updatedBodies.length > 0 && updatedCtas.length > 0) {
@@ -379,10 +540,10 @@ export const StudioView: React.FC<StudioViewProps> = ({
     const typeName = type === 'hook' ? 'Ganchos' : type === 'body' ? 'Corpos' : 'CTAs';
     if (updatedHooks.length === 3 && updatedBodies.length === 3 && updatedCtas.length === 3) {
       showNotice(
-        `🎉 3 Ganchos + 3 Corpos + 3 CTAs prontos! 27 combinações geradas com Capa de Alto Impacto embutida no 1º frame do MP4!`
+        `🎉 3 Ganchos + 3 Corpos + 3 CTAs prontos! 27 combinações geradas com Capa no 1º frame do MP4!`
       );
     } else {
-      showNotice(`${newClips.length} arquivo(s) de ${typeName} carregado(s) com sucesso!`);
+      showNotice(`${fileList.length} arquivo(s) de ${typeName} distribuído(s) nos slots com sucesso!`);
     }
   };
 
@@ -593,6 +754,25 @@ export const StudioView: React.FC<StudioViewProps> = ({
                 </span>
               )}
             </div>
+
+            {/* Indicador do Motor FFmpeg Nativo */}
+            <div className="flex items-center gap-2">
+              {ffmpegOnline ? (
+                <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[11px] font-mono shadow-[0_0_12px_rgba(16,185,129,0.2)]">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                  <Cpu className="w-3 h-3 text-emerald-400" />
+                  <span>Motor FFmpeg Nativo: Ativo</span>
+                </span>
+              ) : (
+                <span
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-900 text-slate-400 border border-slate-700/60 text-[11px] font-mono cursor-help"
+                  title="Para renderização com FFmpeg nativo super rápida e fluida, execute iniciar_motor.bat na pasta do projeto"
+                >
+                  <span className="w-2 h-2 rounded-full bg-slate-500"></span>
+                  <span>FFmpeg: Offline (Clique no .bat)</span>
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -647,10 +827,10 @@ export const StudioView: React.FC<StudioViewProps> = ({
         </div>
       )}
 
-      {/* 3 Colunas de Upload (Ganchos, Corpos, CTAs) */}
+      {/* 3 Colunas de Upload (Ganchos, Corpos, CTAs) com 3 Slots Estruturados */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Coluna 1: Ganchos (Hooks) */}
-        <div className="glass-card rounded-2xl p-4 flex flex-col justify-between border-t-2 border-t-purple-500">
+        {/* Coluna 1: Ganchos (Hooks - G1, G2, G3) */}
+        <div className="glass-card rounded-2xl p-4 flex flex-col justify-between border-t-2 border-t-purple-500 shadow-[0_0_25px_rgba(168,85,247,0.15)]">
           <div>
             <div className="flex items-center justify-between pb-3 border-b border-purple-500/15 mb-3">
               <div className="flex items-center gap-2">
@@ -667,61 +847,109 @@ export const StudioView: React.FC<StudioViewProps> = ({
               </span>
             </div>
 
-            {/* List of Loaded Hook Clips */}
-            <div className="space-y-2.5 mb-3 min-h-[160px]">
-              {project.hooks.length === 0 ? (
-                <div className="h-40 border-2 border-dashed border-purple-500/20 rounded-xl flex flex-col items-center justify-center p-4 text-center">
-                  <Film className="w-7 h-7 text-purple-400/50 mb-2" />
-                  <p className="text-xs text-slate-400 font-medium">Nenhum gancho carregado</p>
-                  <p className="text-[10px] text-slate-500 mt-0.5">Arraste ou selecione até 3 vídeos</p>
-                </div>
-              ) : (
-                project.hooks.map((clip, idx) => (
-                  <div
-                    key={clip.id}
-                    className="p-2.5 rounded-xl bg-slate-950/70 border border-purple-500/25 hover:border-purple-500/45 transition-colors"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <span className="w-5 h-5 rounded bg-purple-500/20 text-purple-300 text-[10px] font-mono font-bold flex items-center justify-center shrink-0">
-                          G{idx + 1}
-                        </span>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <p className="text-xs font-bold text-slate-200 truncate" title={clip.fileName || clip.title}>
-                              {clip.fileName || clip.title}
-                            </p>
-                            {!isDemoClip(clip) ? (
-                              <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
-                                VÍDEO REAL
+            {/* 3 Slots Estruturados e Independentes (G1, G2, G3) */}
+            <div className="space-y-2 mb-3">
+              {[0, 1, 2].map((slotIdx) => {
+                const clip = project.hooks[slotIdx];
+                const code = `G${slotIdx + 1}`;
+                const label = `Gancho ${slotIdx + 1}`;
+                const thumbUrl = clip ? getClipFirstFrameDataUrl(clip) : undefined;
+                const isDemo = clip ? isDemoClip(clip) : true;
+
+                return (
+                  <div key={`hook-slot-${slotIdx}`}>
+                    <input
+                      type="file"
+                      ref={(el) => {
+                        slotInputRefs.current[`hook_${slotIdx}`] = el;
+                      }}
+                      accept="video/mp4,video/quicktime,video/webm"
+                      className="hidden"
+                      onChange={(e) =>
+                        e.target.files?.[0] && handleUploadSlot('hook', slotIdx, e.target.files[0])
+                      }
+                    />
+
+                    {clip ? (
+                      <div className="p-2 rounded-xl bg-slate-950/80 border border-purple-500/30 hover:border-purple-500/50 transition-colors">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="relative w-8 h-12 rounded bg-slate-900 overflow-hidden shrink-0 border border-purple-500/30">
+                              {thumbUrl ? (
+                                <img src={thumbUrl} alt="" className="w-full h-full object-cover" />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center text-purple-400/50">
+                                  <Film className="w-4 h-4" />
+                                </div>
+                              )}
+                              <span className="absolute bottom-0 inset-x-0 bg-black/80 text-[8px] font-mono font-bold text-purple-300 text-center">
+                                {code}
                               </span>
-                            ) : (
-                              <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">
-                                DEMO
-                              </span>
-                            )}
+                            </div>
+
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <p className="text-xs font-bold text-slate-200 truncate" title={clip.fileName || clip.title}>
+                                  {clip.fileName || clip.title}
+                                </p>
+                                {!isDemo ? (
+                                  <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
+                                    VÍDEO REAL
+                                  </span>
+                                ) : (
+                                  <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">
+                                    DEMO
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[10px] text-slate-400 font-mono">
+                                {clip.duration}s · {clip.fileSize || '3.8 MB'}
+                              </p>
+                            </div>
                           </div>
-                          <p className="text-[10px] text-slate-400 font-mono">
-                            {clip.duration}s · {clip.fileSize || '3.8 MB'}
-                          </p>
+
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              onClick={() => triggerSingleSlotInput('hook', slotIdx)}
+                              className="px-2 py-1 rounded bg-slate-900 hover:bg-slate-800 text-[10px] text-purple-300 font-semibold border border-purple-500/25 cursor-pointer"
+                              title={`Substituir ${label}`}
+                            >
+                              Trocar
+                            </button>
+                            <button
+                              onClick={() => handleRemoveSlot('hook', slotIdx)}
+                              className="p-1 rounded text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 cursor-pointer"
+                              title={`Remover ${label}`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
                       </div>
+                    ) : (
                       <button
-                        onClick={() => handleRemoveClip('hook', clip.id)}
-                        className="p-1 rounded text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 transition-colors cursor-pointer shrink-0"
-                        title="Remover clipe"
+                        onClick={() => triggerSingleSlotInput('hook', slotIdx)}
+                        className="w-full py-2.5 px-3 rounded-xl border border-dashed border-purple-500/30 hover:border-purple-500/70 bg-purple-950/15 hover:bg-purple-900/25 flex items-center justify-between text-xs transition-all cursor-pointer group"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        <div className="flex items-center gap-2">
+                          <span className="w-5 h-5 rounded bg-purple-500/20 text-purple-300 text-[10px] font-mono font-bold flex items-center justify-center">
+                            {code}
+                          </span>
+                          <span className="text-slate-400 group-hover:text-purple-200 font-medium text-[11px]">
+                            + Carregar {label} (.mp4, .mov)
+                          </span>
+                        </div>
+                        <Upload className="w-3.5 h-3.5 text-purple-400 group-hover:scale-110 transition-transform" />
                       </button>
-                    </div>
+                    )}
                   </div>
-                ))
-              )}
+                );
+              })}
             </div>
           </div>
 
           {/* Upload Button */}
-          <div className="space-y-2">
+          <div className="space-y-2 pt-2 border-t border-purple-500/15">
             <input
               type="file"
               ref={hookInputRef}
@@ -732,10 +960,10 @@ export const StudioView: React.FC<StudioViewProps> = ({
             />
             <button
               onClick={() => hookInputRef.current?.click()}
-              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-purple-500/30 hover:border-purple-500/60 bg-purple-950/20 hover:bg-purple-900/30 text-xs font-semibold text-purple-300 transition-all cursor-pointer"
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-purple-500/40 hover:border-purple-500/80 bg-purple-950/30 hover:bg-purple-900/40 text-xs font-semibold text-purple-200 transition-all cursor-pointer"
             >
               <Upload className="w-3.5 h-3.5" />
-              <span>Adicionar Ganchos (.mp4, .mov)</span>
+              <span>Subir os 3 Ganchos de Uma Vez (.mp4, .mov)</span>
             </button>
             {project.hooks.length > 0 && (
               <button
@@ -748,8 +976,8 @@ export const StudioView: React.FC<StudioViewProps> = ({
           </div>
         </div>
 
-        {/* Coluna 2: Corpos (Bodies) */}
-        <div className="glass-card rounded-2xl p-4 flex flex-col justify-between border-t-2 border-t-blue-500">
+        {/* Coluna 2: Corpos (Bodies - C1, C2, C3) */}
+        <div className="glass-card rounded-2xl p-4 flex flex-col justify-between border-t-2 border-t-blue-500 shadow-[0_0_25px_rgba(59,130,246,0.15)]">
           <div>
             <div className="flex items-center justify-between pb-3 border-b border-purple-500/15 mb-3">
               <div className="flex items-center gap-2">
@@ -766,61 +994,109 @@ export const StudioView: React.FC<StudioViewProps> = ({
               </span>
             </div>
 
-            {/* List of Loaded Body Clips */}
-            <div className="space-y-2.5 mb-3 min-h-[160px]">
-              {project.bodies.length === 0 ? (
-                <div className="h-40 border-2 border-dashed border-blue-500/20 rounded-xl flex flex-col items-center justify-center p-4 text-center">
-                  <Film className="w-7 h-7 text-blue-400/50 mb-2" />
-                  <p className="text-xs text-slate-400 font-medium">Nenhum corpo carregado</p>
-                  <p className="text-[10px] text-slate-500 mt-0.5">Arraste ou selecione até 3 vídeos</p>
-                </div>
-              ) : (
-                project.bodies.map((clip, idx) => (
-                  <div
-                    key={clip.id}
-                    className="p-2.5 rounded-xl bg-slate-950/70 border border-blue-500/25 hover:border-blue-500/45 transition-colors"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <span className="w-5 h-5 rounded bg-blue-500/20 text-blue-300 text-[10px] font-mono font-bold flex items-center justify-center shrink-0">
-                          C{idx + 1}
-                        </span>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <p className="text-xs font-bold text-slate-200 truncate" title={clip.fileName || clip.title}>
-                              {clip.fileName || clip.title}
-                            </p>
-                            {!isDemoClip(clip) ? (
-                              <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
-                                VÍDEO REAL
+            {/* 3 Slots Estruturados e Independentes (C1, C2, C3) */}
+            <div className="space-y-2 mb-3">
+              {[0, 1, 2].map((slotIdx) => {
+                const clip = project.bodies[slotIdx];
+                const code = `C${slotIdx + 1}`;
+                const label = `Corpo ${slotIdx + 1}`;
+                const thumbUrl = clip ? getClipFirstFrameDataUrl(clip) : undefined;
+                const isDemo = clip ? isDemoClip(clip) : true;
+
+                return (
+                  <div key={`body-slot-${slotIdx}`}>
+                    <input
+                      type="file"
+                      ref={(el) => {
+                        slotInputRefs.current[`body_${slotIdx}`] = el;
+                      }}
+                      accept="video/mp4,video/quicktime,video/webm"
+                      className="hidden"
+                      onChange={(e) =>
+                        e.target.files?.[0] && handleUploadSlot('body', slotIdx, e.target.files[0])
+                      }
+                    />
+
+                    {clip ? (
+                      <div className="p-2 rounded-xl bg-slate-950/80 border border-blue-500/30 hover:border-blue-500/50 transition-colors">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="relative w-8 h-12 rounded bg-slate-900 overflow-hidden shrink-0 border border-blue-500/30">
+                              {thumbUrl ? (
+                                <img src={thumbUrl} alt="" className="w-full h-full object-cover" />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center text-blue-400/50">
+                                  <Film className="w-4 h-4" />
+                                </div>
+                              )}
+                              <span className="absolute bottom-0 inset-x-0 bg-black/80 text-[8px] font-mono font-bold text-blue-300 text-center">
+                                {code}
                               </span>
-                            ) : (
-                              <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">
-                                DEMO
-                              </span>
-                            )}
+                            </div>
+
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <p className="text-xs font-bold text-slate-200 truncate" title={clip.fileName || clip.title}>
+                                  {clip.fileName || clip.title}
+                                </p>
+                                {!isDemo ? (
+                                  <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
+                                    VÍDEO REAL
+                                  </span>
+                                ) : (
+                                  <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30 shrink-0">
+                                    DEMO
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[10px] text-slate-400 font-mono">
+                                {clip.duration}s · {clip.fileSize || '6.8 MB'}
+                              </p>
+                            </div>
                           </div>
-                          <p className="text-[10px] text-slate-400 font-mono">
-                            {clip.duration}s · {clip.fileSize || '6.8 MB'}
-                          </p>
+
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              onClick={() => triggerSingleSlotInput('body', slotIdx)}
+                              className="px-2 py-1 rounded bg-slate-900 hover:bg-slate-800 text-[10px] text-blue-300 font-semibold border border-blue-500/25 cursor-pointer"
+                              title={`Substituir ${label}`}
+                            >
+                              Trocar
+                            </button>
+                            <button
+                              onClick={() => handleRemoveSlot('body', slotIdx)}
+                              className="p-1 rounded text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 cursor-pointer"
+                              title={`Remover ${label}`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
                       </div>
+                    ) : (
                       <button
-                        onClick={() => handleRemoveClip('body', clip.id)}
-                        className="p-1 rounded text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 transition-colors cursor-pointer shrink-0"
-                        title="Remover clipe"
+                        onClick={() => triggerSingleSlotInput('body', slotIdx)}
+                        className="w-full py-2.5 px-3 rounded-xl border border-dashed border-blue-500/30 hover:border-blue-500/70 bg-blue-950/15 hover:bg-blue-900/25 flex items-center justify-between text-xs transition-all cursor-pointer group"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        <div className="flex items-center gap-2">
+                          <span className="w-5 h-5 rounded bg-blue-500/20 text-blue-300 text-[10px] font-mono font-bold flex items-center justify-center">
+                            {code}
+                          </span>
+                          <span className="text-slate-400 group-hover:text-blue-200 font-medium text-[11px]">
+                            + Carregar {label} (.mp4, .mov)
+                          </span>
+                        </div>
+                        <Upload className="w-3.5 h-3.5 text-blue-400 group-hover:scale-110 transition-transform" />
                       </button>
-                    </div>
+                    )}
                   </div>
-                ))
-              )}
+                );
+              })}
             </div>
           </div>
 
           {/* Upload Button */}
-          <div className="space-y-2">
+          <div className="space-y-2 pt-2 border-t border-purple-500/15">
             <input
               type="file"
               ref={bodyInputRef}
@@ -831,10 +1107,10 @@ export const StudioView: React.FC<StudioViewProps> = ({
             />
             <button
               onClick={() => bodyInputRef.current?.click()}
-              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-blue-500/30 hover:border-blue-500/60 bg-blue-950/20 hover:bg-blue-900/30 text-xs font-semibold text-blue-300 transition-all cursor-pointer"
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-blue-500/40 hover:border-blue-500/80 bg-blue-950/30 hover:bg-blue-900/40 text-xs font-semibold text-blue-200 transition-all cursor-pointer"
             >
               <Upload className="w-3.5 h-3.5" />
-              <span>Adicionar Corpos (.mp4, .mov)</span>
+              <span>Subir os 3 Corpos de Uma Vez (.mp4, .mov)</span>
             </button>
             {project.bodies.length > 0 && (
               <button
@@ -847,8 +1123,8 @@ export const StudioView: React.FC<StudioViewProps> = ({
           </div>
         </div>
 
-        {/* Coluna 3: CTAs */}
-        <div className="glass-card rounded-2xl p-4 flex flex-col justify-between border-t-2 border-t-emerald-500">
+        {/* Coluna 3: CTAs (CTA1, CTA2, CTA3) */}
+        <div className="glass-card rounded-2xl p-4 flex flex-col justify-between border-t-2 border-t-emerald-500 shadow-[0_0_25px_rgba(16,185,129,0.15)]">
           <div>
             <div className="flex items-center justify-between pb-3 border-b border-purple-500/15 mb-3">
               <div className="flex items-center gap-2">
@@ -865,61 +1141,109 @@ export const StudioView: React.FC<StudioViewProps> = ({
               </span>
             </div>
 
-            {/* List of Loaded CTA Clips */}
-            <div className="space-y-2.5 mb-3 min-h-[160px]">
-              {project.ctas.length === 0 ? (
-                <div className="h-40 border-2 border-dashed border-emerald-500/20 rounded-xl flex flex-col items-center justify-center p-4 text-center">
-                  <Film className="w-7 h-7 text-emerald-400/50 mb-2" />
-                  <p className="text-xs text-slate-400 font-medium">Nenhum CTA carregado</p>
-                  <p className="text-[10px] text-slate-500 mt-0.5">Arraste ou selecione até 3 vídeos</p>
-                </div>
-              ) : (
-                project.ctas.map((clip, idx) => (
-                  <div
-                    key={clip.id}
-                    className="p-2.5 rounded-xl bg-slate-950/70 border border-emerald-500/25 hover:border-emerald-500/45 transition-colors"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <span className="w-5 h-5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-mono font-bold flex items-center justify-center shrink-0">
-                          CTA{idx + 1}
-                        </span>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <p className="text-xs font-bold text-slate-200 truncate" title={clip.fileName || clip.title}>
-                              {clip.fileName || clip.title}
-                            </p>
-                            {!isDemoClip(clip) ? (
-                              <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
-                                VÍDEO REAL
+            {/* 3 Slots Estruturados e Independentes (CTA1, CTA2, CTA3) */}
+            <div className="space-y-2 mb-3">
+              {[0, 1, 2].map((slotIdx) => {
+                const clip = project.ctas[slotIdx];
+                const code = `CTA${slotIdx + 1}`;
+                const label = `CTA ${slotIdx + 1}`;
+                const thumbUrl = clip ? getClipFirstFrameDataUrl(clip) : undefined;
+                const isDemo = clip ? isDemoClip(clip) : true;
+
+                return (
+                  <div key={`cta-slot-${slotIdx}`}>
+                    <input
+                      type="file"
+                      ref={(el) => {
+                        slotInputRefs.current[`cta_${slotIdx}`] = el;
+                      }}
+                      accept="video/mp4,video/quicktime,video/webm"
+                      className="hidden"
+                      onChange={(e) =>
+                        e.target.files?.[0] && handleUploadSlot('cta', slotIdx, e.target.files[0])
+                      }
+                    />
+
+                    {clip ? (
+                      <div className="p-2 rounded-xl bg-slate-950/80 border border-emerald-500/30 hover:border-emerald-500/50 transition-colors">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="relative w-8 h-12 rounded bg-slate-900 overflow-hidden shrink-0 border border-emerald-500/30">
+                              {thumbUrl ? (
+                                <img src={thumbUrl} alt="" className="w-full h-full object-cover" />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center text-emerald-400/50">
+                                  <Film className="w-4 h-4" />
+                                </div>
+                              )}
+                              <span className="absolute bottom-0 inset-x-0 bg-black/80 text-[8px] font-mono font-bold text-emerald-300 text-center">
+                                {code}
                               </span>
-                            ) : (
-                              <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">
-                                DEMO
-                              </span>
-                            )}
+                            </div>
+
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <p className="text-xs font-bold text-slate-200 truncate" title={clip.fileName || clip.title}>
+                                  {clip.fileName || clip.title}
+                                </p>
+                                {!isDemo ? (
+                                  <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
+                                    VÍDEO REAL
+                                  </span>
+                                ) : (
+                                  <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
+                                    DEMO
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[10px] text-slate-400 font-mono">
+                                {clip.duration}s · {clip.fileSize || '3.4 MB'}
+                              </p>
+                            </div>
                           </div>
-                          <p className="text-[10px] text-slate-400 font-mono">
-                            {clip.duration}s · {clip.fileSize || '3.4 MB'}
-                          </p>
+
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              onClick={() => triggerSingleSlotInput('cta', slotIdx)}
+                              className="px-2 py-1 rounded bg-slate-900 hover:bg-slate-800 text-[10px] text-emerald-300 font-semibold border border-emerald-500/25 cursor-pointer"
+                              title={`Substituir ${label}`}
+                            >
+                              Trocar
+                            </button>
+                            <button
+                              onClick={() => handleRemoveSlot('cta', slotIdx)}
+                              className="p-1 rounded text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 cursor-pointer"
+                              title={`Remover ${label}`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
                       </div>
+                    ) : (
                       <button
-                        onClick={() => handleRemoveClip('cta', clip.id)}
-                        className="p-1 rounded text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 transition-colors cursor-pointer shrink-0"
-                        title="Remover clipe"
+                        onClick={() => triggerSingleSlotInput('cta', slotIdx)}
+                        className="w-full py-2.5 px-3 rounded-xl border border-dashed border-emerald-500/30 hover:border-emerald-500/70 bg-emerald-950/15 hover:bg-emerald-900/25 flex items-center justify-between text-xs transition-all cursor-pointer group"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        <div className="flex items-center gap-2">
+                          <span className="w-5 h-5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-mono font-bold flex items-center justify-center">
+                            {code}
+                          </span>
+                          <span className="text-slate-400 group-hover:text-emerald-200 font-medium text-[11px]">
+                            + Carregar {label} (.mp4, .mov)
+                          </span>
+                        </div>
+                        <Upload className="w-3.5 h-3.5 text-emerald-400 group-hover:scale-110 transition-transform" />
                       </button>
-                    </div>
+                    )}
                   </div>
-                ))
-              )}
+                );
+              })}
             </div>
           </div>
 
           {/* Upload Button */}
-          <div className="space-y-2">
+          <div className="space-y-2 pt-2 border-t border-purple-500/15">
             <input
               type="file"
               ref={ctaInputRef}
@@ -930,10 +1254,10 @@ export const StudioView: React.FC<StudioViewProps> = ({
             />
             <button
               onClick={() => ctaInputRef.current?.click()}
-              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-emerald-500/30 hover:border-emerald-500/60 bg-emerald-950/20 hover:bg-emerald-900/30 text-xs font-semibold text-emerald-300 transition-all cursor-pointer"
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-emerald-500/40 hover:border-emerald-500/80 bg-emerald-950/30 hover:bg-emerald-900/40 text-xs font-semibold text-emerald-200 transition-all cursor-pointer"
             >
               <Upload className="w-3.5 h-3.5" />
-              <span>Adicionar CTAs (.mp4, .mov)</span>
+              <span>Subir os 3 CTAs de Uma Vez (.mp4, .mov)</span>
             </button>
             {project.ctas.length > 0 && (
               <button
