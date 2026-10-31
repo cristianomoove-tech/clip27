@@ -122,7 +122,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
       try {
         activeSourceRef.current.stop();
         activeSourceRef.current.disconnect();
-      } catch {}
+      } catch { }
       activeSourceRef.current = null;
     }
   };
@@ -139,15 +139,15 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     const ctx = audioContextRef.current || getAudioContext();
     audioContextRef.current = ctx;
     if (ctx.state === 'suspended') {
-      ctx.resume().catch(() => {});
+      ctx.resume().catch(() => { });
     }
 
     const buffer =
       segment === 'hook'
         ? buffersRef.current.hook
         : segment === 'body'
-        ? buffersRef.current.body
-        : buffersRef.current.cta;
+          ? buffersRef.current.body
+          : buffersRef.current.cta;
 
     if (!buffer) return;
 
@@ -155,8 +155,8 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
       segment === 'hook'
         ? hookTrimStart
         : segment === 'body'
-        ? bodyTrimStart
-        : ctaTrimStart;
+          ? bodyTrimStart
+          : ctaTrimStart;
 
     try {
       if (!masterCompressorRef.current || !masterGainNodeRef.current) {
@@ -197,6 +197,10 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   useEffect(() => {
     if (!variation) return;
 
+    currentTimeRef.current = 0;
+    setCurrentTime(0);
+    activeSegRef.current = 'hook';
+
     const ctx = getAudioContext();
     audioContextRef.current = ctx;
     let mounted = true;
@@ -216,7 +220,14 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
         setNormalizationProfiles(profiles);
 
         if (isPlaying && !isMuted) {
-          playSegmentAudio('hook', 0, profiles, isNormalizationEnabled);
+          const currentT = currentTimeRef.current;
+          if (currentT < hookDur) {
+            playSegmentAudio('hook', currentT, profiles, isNormalizationEnabled);
+          } else if (currentT < hookDur + bodyDur) {
+            playSegmentAudio('body', Math.max(0, currentT - hookDur), profiles, isNormalizationEnabled);
+          } else {
+            playSegmentAudio('cta', Math.max(0, currentT - hookDur - bodyDur), profiles, isNormalizationEnabled);
+          }
         }
       }
     });
@@ -255,7 +266,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
       if (seg === 'hook' && hookVideo) {
         hookVideo.muted = true;
         hookVideo.playbackRate = speed;
-        hookVideo.play().catch(() => {});
+        hookVideo.play().catch(() => { });
         const startHook = () => {
           if (!isMuted && buffersRef.current.hook && !activeSourceRef.current) {
             playSegmentAudio('hook', t);
@@ -269,7 +280,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
       } else if (seg === 'body' && bodyVideo) {
         bodyVideo.muted = true;
         bodyVideo.playbackRate = speed;
-        bodyVideo.play().catch(() => {});
+        bodyVideo.play().catch(() => { });
         const startBody = () => {
           if (!isMuted && buffersRef.current.body && !activeSourceRef.current) {
             playSegmentAudio('body', Math.max(0, t - hookDur));
@@ -283,7 +294,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
       } else if (seg === 'cta' && ctaVideo) {
         ctaVideo.muted = true;
         ctaVideo.playbackRate = speed;
-        ctaVideo.play().catch(() => {});
+        ctaVideo.play().catch(() => { });
         const startCta = () => {
           if (!isMuted && buffersRef.current.cta && !activeSourceRef.current) {
             playSegmentAudio('cta', Math.max(0, t - hookDur - bodyDur));
@@ -314,7 +325,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
               h.currentTime = hookTrimStart;
             }
             h.playbackRate = speed;
-            h.play().catch(() => {});
+            h.play().catch(() => { });
             const startHook = () => {
               if (!isMuted) playSegmentAudio('hook', 0);
             };
@@ -350,7 +361,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
             }
             hVideo.playbackRate = speed;
             if (isPlaying) {
-              hVideo.play().catch(() => {});
+              hVideo.play().catch(() => { });
               const startHookSound = () => {
                 if (!isMuted) playSegmentAudio('hook', 0);
               };
@@ -360,6 +371,24 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                 hVideo.addEventListener('playing', startHookSound, { once: true });
               }
             }
+          }
+        }
+
+        // Pré-carrega o corpo 150ms antes do gancho acabar para transição fluida sem congelamento
+        if (bVideo && bVideo.paused && t >= hookDur - 0.15 && isPlaying) {
+          bVideo.currentTime = bodyTrimStart;
+          bVideo.playbackRate = speed;
+          bVideo.play().catch(() => { });
+        }
+
+        // Correção de drift para gancho
+        if (hVideo && !hVideo.paused && isPlaying) {
+          const targetTime = hookTrimStart + t * speed;
+          const drift = hVideo.currentTime - targetTime;
+          if (Math.abs(drift) > 0.08) {
+            hVideo.playbackRate = drift < 0 ? speed * 1.05 : speed * 0.95;
+          } else {
+            hVideo.playbackRate = speed;
           }
         }
       } else if (t < hookDur + bodyDur) {
@@ -373,7 +402,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
             }
             bVideo.playbackRate = speed;
             if (isPlaying) {
-              bVideo.play().catch(() => {});
+              bVideo.play().catch(() => { });
               const startBodySound = () => {
                 if (!isMuted) playSegmentAudio('body', 0);
               };
@@ -383,6 +412,24 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                 bVideo.addEventListener('playing', startBodySound, { once: true });
               }
             }
+          }
+        }
+
+        // Pré-carrega o CTA 150ms antes do corpo acabar
+        if (cVideo && cVideo.paused && t >= hookDur + bodyDur - 0.15 && isPlaying) {
+          cVideo.currentTime = ctaTrimStart;
+          cVideo.playbackRate = speed;
+          cVideo.play().catch(() => { });
+        }
+
+        // Correção de drift para corpo
+        if (bVideo && !bVideo.paused && isPlaying) {
+          const targetTime = bodyTrimStart + (t - hookDur) * speed;
+          const drift = bVideo.currentTime - targetTime;
+          if (Math.abs(drift) > 0.08) {
+            bVideo.playbackRate = drift < 0 ? speed * 1.05 : speed * 0.95;
+          } else {
+            bVideo.playbackRate = speed;
           }
         }
       } else {
@@ -396,7 +443,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
             }
             cVideo.playbackRate = speed;
             if (isPlaying) {
-              cVideo.play().catch(() => {});
+              cVideo.play().catch(() => { });
               const startCtaSound = () => {
                 if (!isMuted) playSegmentAudio('cta', 0);
               };
@@ -406,6 +453,17 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                 cVideo.addEventListener('playing', startCtaSound, { once: true });
               }
             }
+          }
+        }
+
+        // Correção de drift para CTA
+        if (cVideo && !cVideo.paused && isPlaying) {
+          const targetTime = ctaTrimStart + (t - hookDur - bodyDur) * speed;
+          const drift = cVideo.currentTime - targetTime;
+          if (Math.abs(drift) > 0.08) {
+            cVideo.playbackRate = drift < 0 ? speed * 1.05 : speed * 0.95;
+          } else {
+            cVideo.playbackRate = speed;
           }
         }
       }
@@ -461,8 +519,8 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     currentTime < hookDur
       ? 'Gancho'
       : currentTime < hookDur + bodyDur
-      ? 'Corpo'
-      : 'CTA Final';
+        ? 'Corpo'
+        : 'CTA Final';
 
   const handleToggleMute = () => {
     const nextMuted = !isMuted;
@@ -482,8 +540,8 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
         seg === 'hook'
           ? currentTime
           : seg === 'body'
-          ? currentTime - hookDur
-          : currentTime - hookDur - bodyDur;
+            ? currentTime - hookDur
+            : currentTime - hookDur - bodyDur;
       playSegmentAudio(seg, Math.max(0, segOffset));
     }
   };
@@ -497,8 +555,8 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
         activeSegRef.current === 'hook'
           ? normalizationProfiles.hook
           : activeSegRef.current === 'body'
-          ? normalizationProfiles.body
-          : normalizationProfiles.cta;
+            ? normalizationProfiles.body
+            : normalizationProfiles.cta;
       const targetGain = nextVal && prof ? prof.normalizationGain : 1.0;
       currentSegmentGainRef.current.gain.linearRampToValueAtTime(
         targetGain,
@@ -518,7 +576,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
       activeSegRef.current = 'hook';
       if (hookVideo) {
         hookVideo.currentTime = hookTrimStart + newTime * speed;
-        if (isPlaying) hookVideo.play().catch(() => {});
+        if (isPlaying) hookVideo.play().catch(() => { });
       }
       if (bodyVideo) bodyVideo.pause();
       if (ctaVideo) ctaVideo.pause();
@@ -530,7 +588,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
       const offset = newTime - hookDur;
       if (bodyVideo) {
         bodyVideo.currentTime = bodyTrimStart + offset * speed;
-        if (isPlaying) bodyVideo.play().catch(() => {});
+        if (isPlaying) bodyVideo.play().catch(() => { });
       }
       if (hookVideo) hookVideo.pause();
       if (ctaVideo) ctaVideo.pause();
@@ -542,7 +600,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
       const offset = newTime - hookDur - bodyDur;
       if (ctaVideo) {
         ctaVideo.currentTime = ctaTrimStart + offset * speed;
-        if (isPlaying) ctaVideo.play().catch(() => {});
+        if (isPlaying) ctaVideo.play().catch(() => { });
       }
       if (hookVideo) hookVideo.pause();
       if (bodyVideo) bodyVideo.pause();
@@ -702,6 +760,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
       >
         {hookUrl && (
           <video
+            key={`hook-${activeVariation.id}-${hookUrl}`}
             ref={hookVideoRef}
             src={hookUrl}
             playsInline
@@ -711,6 +770,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
         )}
         {bodyUrl && (
           <video
+            key={`body-${activeVariation.id}-${bodyUrl}`}
             ref={bodyVideoRef}
             src={bodyUrl}
             playsInline
@@ -720,6 +780,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
         )}
         {ctaUrl && (
           <video
+            key={`cta-${activeVariation.id}-${ctaUrl}`}
             ref={ctaVideoRef}
             src={ctaUrl}
             playsInline
@@ -812,11 +873,10 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                 <button
                   type="button"
                   onClick={() => handleCopyField(coverTitle, 'cover')}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-[11px] font-extrabold transition-all cursor-pointer ${
-                    copiedField === 'cover'
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-[11px] font-extrabold transition-all cursor-pointer ${copiedField === 'cover'
                       ? 'bg-emerald-500 text-slate-950'
                       : 'bg-amber-400 hover:bg-amber-300 text-slate-950'
-                  }`}
+                    }`}
                 >
                   {copiedField === 'cover' ? (
                     <>
@@ -866,11 +926,10 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
               <button
                 type="button"
                 onClick={() => handleCopyField(seoCaption, 'seo')}
-                className={`w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
-                  copiedField === 'seo'
+                className={`w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${copiedField === 'seo'
                     ? 'bg-emerald-500 text-slate-950'
                     : 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                }`}
+                  }`}
               >
                 {copiedField === 'seo' ? (
                   <>
@@ -898,11 +957,10 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                 <button
                   type="button"
                   onClick={() => handleSeek(0)}
-                  className={`w-full p-1.5 rounded-lg flex items-center justify-between gap-2 transition-colors cursor-pointer text-left ${
-                    currentSegment === 'Gancho'
+                  className={`w-full p-1.5 rounded-lg flex items-center justify-between gap-2 transition-colors cursor-pointer text-left ${currentSegment === 'Gancho'
                       ? 'bg-fuchsia-500/25 border border-fuchsia-500/40 text-fuchsia-200'
                       : 'bg-slate-900/60 hover:bg-slate-900 text-slate-300'
-                  }`}
+                    }`}
                 >
                   <div className="flex items-center gap-2 truncate">
                     <span className="w-4 h-4 rounded-full bg-fuchsia-500/30 text-fuchsia-300 text-[9px] font-mono flex items-center justify-center shrink-0">
@@ -918,11 +976,10 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                 <button
                   type="button"
                   onClick={() => handleSeek(hookDur + 0.05)}
-                  className={`w-full p-1.5 rounded-lg flex items-center justify-between gap-2 transition-colors cursor-pointer text-left ${
-                    currentSegment === 'Corpo'
+                  className={`w-full p-1.5 rounded-lg flex items-center justify-between gap-2 transition-colors cursor-pointer text-left ${currentSegment === 'Corpo'
                       ? 'bg-sky-500/25 border border-sky-500/40 text-sky-200'
                       : 'bg-slate-900/60 hover:bg-slate-900 text-slate-300'
-                  }`}
+                    }`}
                 >
                   <div className="flex items-center gap-2 truncate">
                     <span className="w-4 h-4 rounded-full bg-sky-500/30 text-sky-300 text-[9px] font-mono flex items-center justify-center shrink-0">
@@ -938,11 +995,10 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                 <button
                   type="button"
                   onClick={() => handleSeek(hookDur + bodyDur + 0.05)}
-                  className={`w-full p-1.5 rounded-lg flex items-center justify-between gap-2 transition-colors cursor-pointer text-left ${
-                    currentSegment === 'CTA Final'
+                  className={`w-full p-1.5 rounded-lg flex items-center justify-between gap-2 transition-colors cursor-pointer text-left ${currentSegment === 'CTA Final'
                       ? 'bg-emerald-500/25 border border-emerald-500/40 text-emerald-200'
                       : 'bg-slate-900/60 hover:bg-slate-900 text-slate-300'
-                  }`}
+                    }`}
                 >
                   <div className="flex items-center gap-2 truncate">
                     <span className="w-4 h-4 rounded-full bg-emerald-500/30 text-emerald-300 text-[9px] font-mono flex items-center justify-center shrink-0">
@@ -976,11 +1032,10 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
 
                 <button
                   onClick={handleToggleNormalization}
-                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all border cursor-pointer ${
-                    isNormalizationEnabled
+                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all border cursor-pointer ${isNormalizationEnabled
                       ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
                       : 'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700'
-                  }`}
+                    }`}
                 >
                   {isNormalizationEnabled ? 'Nivelado ATIVO' : 'Desativado'}
                 </button>
@@ -1031,11 +1086,10 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
 
               <button
                 onClick={handleToggleMute}
-                className={`p-2 rounded-xl border transition-colors cursor-pointer ${
-                  isMuted
+                className={`p-2 rounded-xl border transition-colors cursor-pointer ${isMuted
                     ? 'bg-rose-950/50 text-rose-400 border-rose-500/30'
                     : 'bg-slate-900 text-emerald-400 border-purple-500/30 hover:bg-slate-800'
-                }`}
+                  }`}
                 title={isMuted ? 'Ativar Som' : 'Silenciar'}
               >
                 {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}

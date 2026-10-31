@@ -289,11 +289,16 @@ export const StudioView: React.FC<StudioViewProps> = ({
   ) => {
     if (!files || files.length === 0) return;
 
+    // Ordenação natural dos arquivos (ex: G1, G2, G3 ou 1, 2, 3) para puxar exatamente na ordem correta
+    const sortedFiles = Array.from(files).sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+    );
+
     const newClips: VideoClip[] = [];
     const defaultDur = type === 'hook' ? 4.0 : type === 'body' ? 7.0 : 3.5;
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
+    for (let i = 0; i < sortedFiles.length; i++) {
+      const file = sortedFiles[i];
       const url = URL.createObjectURL(file);
       const sizeMb = (file.size / (1024 * 1024)).toFixed(1) + ' MB';
       const label = type === 'hook' ? 'Gancho' : type === 'body' ? 'Corpo' : 'CTA';
@@ -318,43 +323,46 @@ export const StudioView: React.FC<StudioViewProps> = ({
 
     clearAudioBufferCache();
 
-    let updatedHooks = project.hooks;
-    let updatedBodies = project.bodies;
-    let updatedCtas = project.ctas;
+    // Limpar o valor do input para permitir reenvio dos mesmos arquivos se necessário
+    if (hookInputRef.current) hookInputRef.current.value = '';
+    if (bodyInputRef.current) bodyInputRef.current.value = '';
+    if (ctaInputRef.current) ctaInputRef.current.value = '';
+
+    const currentProj = latestProjectRef.current;
+    let updatedHooks = [...currentProj.hooks];
+    let updatedBodies = [...currentProj.bodies];
+    let updatedCtas = [...currentProj.ctas];
 
     if (type === 'hook') {
-      const hasDemos = project.hooks.some(isDemoClip);
+      const hasDemos = currentProj.hooks.some(isDemoClip);
       const replaceAll = hasDemos || forceReplace || newClips.length >= 3;
-      const nonDemos = project.hooks.filter((c) => !isDemoClip(c));
-      updatedHooks = replaceAll ? newClips : [...nonDemos, ...newClips];
-      updatedHooks = updatedHooks.slice(0, 3);
+      const nonDemos = currentProj.hooks.filter((c) => !isDemoClip(c));
+      updatedHooks = replaceAll ? newClips.slice(0, 3) : [...nonDemos, ...newClips].slice(-3);
     } else if (type === 'body') {
-      const hasDemos = project.bodies.some(isDemoClip);
+      const hasDemos = currentProj.bodies.some(isDemoClip);
       const replaceAll = hasDemos || forceReplace || newClips.length >= 3;
-      const nonDemos = project.bodies.filter((c) => !isDemoClip(c));
-      updatedBodies = replaceAll ? newClips : [...nonDemos, ...newClips];
-      updatedBodies = updatedBodies.slice(0, 3);
+      const nonDemos = currentProj.bodies.filter((c) => !isDemoClip(c));
+      updatedBodies = replaceAll ? newClips.slice(0, 3) : [...nonDemos, ...newClips].slice(-3);
     } else {
-      const hasDemos = project.ctas.some(isDemoClip);
+      const hasDemos = currentProj.ctas.some(isDemoClip);
       const replaceAll = hasDemos || forceReplace || newClips.length >= 3;
-      const nonDemos = project.ctas.filter((c) => !isDemoClip(c));
-      updatedCtas = replaceAll ? newClips : [...nonDemos, ...newClips];
-      updatedCtas = updatedCtas.slice(0, 3);
+      const nonDemos = currentProj.ctas.filter((c) => !isDemoClip(c));
+      updatedCtas = replaceAll ? newClips.slice(0, 3) : [...nonDemos, ...newClips].slice(-3);
     }
 
-    let newVariations = project.generatedVariations;
+    let newVariations = currentProj.generatedVariations;
     if (updatedHooks.length > 0 && updatedBodies.length > 0 && updatedCtas.length > 0) {
       newVariations = compileCartesianMatrix(
         updatedHooks,
         updatedBodies,
         updatedCtas,
         [],
-        project.id,
+        currentProj.id,
         true,
         'minimal_clean',
         {
-          productKeyword: productKeywordInput.trim() || project.productKeyword,
-          projectName: project.name,
+          productKeyword: productKeywordInput.trim() || currentProj.productKeyword,
+          projectName: currentProj.name,
         }
       );
     }
@@ -508,29 +516,33 @@ export const StudioView: React.FC<StudioViewProps> = ({
   };
 
   // Cartesian 3x3x3 matrix calculation
-  const totalPossible = project.hooks.length * project.bodies.length * project.ctas.length;
+  const curProj = latestProjectRef.current;
+  const totalPossible = curProj.hooks.length * curProj.bodies.length * curProj.ctas.length;
 
   const handleGenerateVariations = () => {
-    if (totalPossible === 0) return;
+    const p = latestProjectRef.current;
+    const possible = p.hooks.length * p.bodies.length * p.ctas.length;
+    if (possible === 0) return;
     setIsGeneratingMatrix(true);
 
     setTimeout(() => {
+      const current = latestProjectRef.current;
       const variations = compileCartesianMatrix(
-        project.hooks,
-        project.bodies,
-        project.ctas,
+        current.hooks,
+        current.bodies,
+        current.ctas,
         [],
-        project.id,
+        current.id,
         true,
         'minimal_clean',
         {
-          productKeyword: productKeywordInput.trim(),
-          projectName: project.name,
+          productKeyword: productKeywordInput.trim() || current.productKeyword,
+          projectName: current.name,
         }
       );
 
       updateProjectWithSave({
-        productKeyword: productKeywordInput.trim(),
+        productKeyword: productKeywordInput.trim() || current.productKeyword,
         generatedVariations: variations,
         videosGenerated: variations.length,
       });
@@ -538,7 +550,7 @@ export const StudioView: React.FC<StudioViewProps> = ({
       showNotice(
         `${variations.length} vídeos únicos com Capa de Alto Impacto embutida no 1º frame gerados!`
       );
-    }, 300);
+    }, 200);
   };
 
   return (

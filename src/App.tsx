@@ -371,23 +371,26 @@ export default function App() {
   };
 
   const handleUpdateActiveProject = (updated: Partial<Project>, deferPersist: boolean = false) => {
-    let merged = { ...activeProject, ...updated };
-    if (merged.generatedVariations && merged.generatedVariations.length > 0) {
-      merged.generatedVariations = hydrateVariationsWithProject(merged.generatedVariations, merged);
-    }
-    setActiveProject(merged);
-    setProjects((prev) => {
-      const exists = prev.some((p) => p.id === merged.id);
-      return exists ? prev.map((p) => (p.id === merged.id ? merged : p)) : [merged, ...prev];
-    });
-
-    if (!deferPersist) {
-      saveSingleLocalProject(merged);
-      const uid = currentUser?.uid || activeLicenseUser?.ID_Usuario;
-      if (uid) {
-        saveProjectToFirestore(uid, merged).catch((e) => console.error(e));
+    setActiveProject((prevActive) => {
+      let merged = { ...prevActive, ...updated };
+      if (merged.generatedVariations && merged.generatedVariations.length > 0) {
+        merged.generatedVariations = hydrateVariationsWithProject(merged.generatedVariations, merged);
       }
-    }
+      setProjects((prev) => {
+        const exists = prev.some((p) => p.id === merged.id);
+        return exists ? prev.map((p) => (p.id === merged.id ? merged : p)) : [merged, ...prev];
+      });
+
+      if (!deferPersist) {
+        saveSingleLocalProject(merged);
+        const uid = currentUser?.uid || activeLicenseUser?.ID_Usuario;
+        if (uid) {
+          saveProjectToFirestore(uid, merged).catch((e) => console.error(e));
+        }
+      }
+
+      return merged;
+    });
   };
 
   const handleDeleteProject = (id: string) => {

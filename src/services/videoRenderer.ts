@@ -314,11 +314,15 @@ export function createVideoElement(
     video.addEventListener('canplay', onLoadedData, { once: true });
     video.addEventListener('error', onError, { once: true });
 
-    video.load();
+    if (video.readyState >= 2) {
+      onLoadedData();
+    } else {
+      video.load();
+    }
 
     setTimeout(() => {
       finish();
-    }, 2500);
+    }, 3500);
   });
 }
 
@@ -512,6 +516,8 @@ export async function renderSingleVariationToBlob(
     let animId: number;
     let isStopped = false;
     let currentSegment: 'cover' | 'hook' | 'body' | 'cta' = 'cover';
+    let bodyPreRolled = false;
+    let ctaPreRolled = false;
     let lastProgressTime = 0;
     let lastReportedPct = -1;
 
@@ -527,6 +533,20 @@ export async function renderSingleVariationToBlob(
         }
       });
     };
+
+    // Pré-carrega o vídeo do gancho para que o primeiro frame de movimento esteja 100% decodificado
+    if (hookVideo) {
+      hookVideo.playbackRate = speed;
+      try {
+        await hookVideo.play();
+      } catch {}
+    }
+
+    // Inicia áudio masterizado exatamente no clock do hardware de áudio
+    const audioStartTime = audioCtx.currentTime;
+    if (audioGraph) {
+      audioGraph.startPlayback(audioStartTime);
+    }
 
     recorder.onstop = () => {
       if (isStopped) return;
@@ -559,7 +579,7 @@ export async function renderSingleVariationToBlob(
       const t = Math.min(elapsed, totalDur);
 
       if (t < COVER_DURATION) {
-        // Frame 0..COVER_DURATION: High-Impact Cover is displayed as the video's poster thumbnail
+        // Frame 0..COVER_DURATION: Capa de Alto Impacto exibida como poster inicial
         ctx.save();
         ctx.drawImage(coverCanvas, 0, 0, canvas.width, canvas.height);
         drawImperceptibleHashPixel(ctx, variation, canvas.width, canvas.height);
@@ -570,27 +590,56 @@ export async function renderSingleVariationToBlob(
         if (t < COVER_DURATION + hookDur) {
           if (currentSegment !== 'hook') {
             currentSegment = 'hook';
-            if (bodyVideo && !bodyVideo.paused) bodyVideo.pause();
-            if (ctaVideo && !ctaVideo.paused) ctaVideo.pause();
-            if (hookVideo) {
+            if (hookVideo && hookVideo.paused) {
               hookVideo.playbackRate = speed;
               hookVideo.play().catch(() => {});
             }
-            if (audioGraph) {
-              audioGraph.setActiveSegment('hook');
+          }
+
+          // Pré-carrega o corpo 150ms antes do gancho acabar para o decodificador GPU já estar ativo
+          if (!bodyPreRolled && bodyVideo && t >= COVER_DURATION + hookDur - 0.15) {
+            bodyPreRolled = true;
+            bodyVideo.currentTime = bodyTrimStart;
+            bodyVideo.playbackRate = speed;
+            bodyVideo.play().catch(() => {});
+          }
+
+          // Sincronização dinâmica de drift para o Gancho
+          if (hookVideo && !hookVideo.paused) {
+            const targetTime = hookTrimStart + (t - COVER_DURATION) * speed;
+            const drift = hookVideo.currentTime - targetTime;
+            if (Math.abs(drift) > 0.05) {
+              hookVideo.playbackRate = drift < 0 ? speed * 1.05 : speed * 0.95;
+            } else {
+              hookVideo.playbackRate = speed;
             }
           }
         } else if (t < COVER_DURATION + hookDur + bodyDur) {
           if (currentSegment !== 'body') {
             currentSegment = 'body';
             if (hookVideo && !hookVideo.paused) hookVideo.pause();
-            if (ctaVideo && !ctaVideo.paused) ctaVideo.pause();
-            if (bodyVideo) {
+            if (bodyVideo && bodyVideo.paused) {
               bodyVideo.playbackRate = speed;
               bodyVideo.play().catch(() => {});
             }
-            if (audioGraph) {
-              audioGraph.setActiveSegment('body');
+          }
+
+          // Pré-carrega o CTA 150ms antes do corpo acabar
+          if (!ctaPreRolled && ctaVideo && t >= COVER_DURATION + hookDur + bodyDur - 0.15) {
+            ctaPreRolled = true;
+            ctaVideo.currentTime = ctaTrimStart;
+            ctaVideo.playbackRate = speed;
+            ctaVideo.play().catch(() => {});
+          }
+
+          // Sincronização dinâmica de drift para o Corpo
+          if (bodyVideo && !bodyVideo.paused) {
+            const targetTime = bodyTrimStart + (t - COVER_DURATION - hookDur) * speed;
+            const drift = bodyVideo.currentTime - targetTime;
+            if (Math.abs(drift) > 0.05) {
+              bodyVideo.playbackRate = drift < 0 ? speed * 1.05 : speed * 0.95;
+            } else {
+              bodyVideo.playbackRate = speed;
             }
           }
         } else {
@@ -598,12 +647,20 @@ export async function renderSingleVariationToBlob(
             currentSegment = 'cta';
             if (hookVideo && !hookVideo.paused) hookVideo.pause();
             if (bodyVideo && !bodyVideo.paused) bodyVideo.pause();
-            if (ctaVideo) {
+            if (ctaVideo && ctaVideo.paused) {
               ctaVideo.playbackRate = speed;
               ctaVideo.play().catch(() => {});
             }
-            if (audioGraph) {
-              audioGraph.setActiveSegment('cta');
+          }
+
+          // Sincronização dinâmica de drift para o CTA
+          if (ctaVideo && !ctaVideo.paused) {
+            const targetTime = ctaTrimStart + (t - COVER_DURATION - hookDur - bodyDur) * speed;
+            const drift = ctaVideo.currentTime - targetTime;
+            if (Math.abs(drift) > 0.05) {
+              ctaVideo.playbackRate = drift < 0 ? speed * 1.05 : speed * 0.95;
+            } else {
+              ctaVideo.playbackRate = speed;
             }
           }
         }

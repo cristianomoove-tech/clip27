@@ -723,9 +723,23 @@ export function hydrateVariationsWithProject(
   }
 
   return (variations || []).map((v, idx) => {
-    const hookClip = hooks[v.hookIndex - 1] || hooks[0] || v.hookClip;
-    const bodyClip = bodies[v.bodyIndex - 1] || bodies[0] || v.bodyClip;
-    const ctaClip = ctas[v.ctaIndex - 1] || ctas[0] || v.ctaClip;
+    let hIdx = typeof v.hookIndex === 'number' && !isNaN(v.hookIndex) ? v.hookIndex : 1;
+    let bIdx = typeof v.bodyIndex === 'number' && !isNaN(v.bodyIndex) ? v.bodyIndex : 1;
+    let cIdx = typeof v.ctaIndex === 'number' && !isNaN(v.ctaIndex) ? v.ctaIndex : 1;
+
+    // Garante extração precisa de G, C e CTA a partir do código caso os índices numéricos tenham se perdido
+    if (v.code) {
+      const match = v.code.match(/G(\d+)[+\-_ ]*C(\d+)[+\-_ ]*CTA(\d+)/i);
+      if (match) {
+        hIdx = parseInt(match[1], 10) || hIdx;
+        bIdx = parseInt(match[2], 10) || bIdx;
+        cIdx = parseInt(match[3], 10) || cIdx;
+      }
+    }
+
+    const hookClip = hooks[hIdx - 1] || hooks[0] || v.hookClip;
+    const bodyClip = bodies[bIdx - 1] || bodies[0] || v.bodyClip;
+    const ctaClip = ctas[cIdx - 1] || ctas[0] || v.ctaClip;
 
     const hookDur = hookClip?.duration || 4.0;
     const bodyDur = bodyClip?.duration || 7.0;
@@ -733,9 +747,9 @@ export function hydrateVariationsWithProject(
 
     const freshSeo = buildVariationCoverAndSeo(
       v.index || idx + 1,
-      v.hookIndex,
-      v.bodyIndex,
-      v.ctaIndex,
+      hIdx,
+      bIdx,
+      cIdx,
       explicitProduct
     );
 
@@ -750,7 +764,10 @@ export function hydrateVariationsWithProject(
 
     return {
       ...v,
-      code: `G${v.hookIndex}+C${v.bodyIndex}+CTA${v.ctaIndex}`,
+      code: `G${hIdx}+C${bIdx}+CTA${cIdx}`,
+      hookIndex: hIdx,
+      bodyIndex: bIdx,
+      ctaIndex: cIdx,
       hookClip,
       bodyClip,
       ctaClip,
