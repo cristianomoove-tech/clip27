@@ -16,7 +16,7 @@ import { AdminLicensesView } from './components/AdminLicensesView';
 import { Project, CreativeVariation, AppSettings, TrendingItem, VideoClip, UsuarioLicenca } from './types';
 import { DEMO_HOOKS, DEMO_BODIES, DEMO_CTAS, DEFAULT_HEADLINES } from './services/demoClips';
 import { getStoredSettings, saveStoredSettings } from './services/aiService';
-import { hydrateVariationsWithProject, getClipBlobUrl, getClipFirstFrameDataUrl } from './services/clipStore';
+import { hydrateVariationsWithProject, getClipBlobUrl, getClipFirstFrameDataUrl, hydrateStoreFromIndexedDB, hydrateClipsWithBlobs } from './services/clipStore';
 import { 
   auth, 
   logoutUser, 
@@ -127,6 +127,29 @@ export default function App() {
 
     // Silent background maintenance: scan and update any expired trial accounts
     runExpirationBot().catch((e) => console.warn('Bot de vencimento silent scan:', e));
+
+    // Rehidrata vídeos reais persistidos no IndexedDB local para manter consistência total após F5/Recarga
+    hydrateStoreFromIndexedDB().then((rehydratedCount) => {
+      if (rehydratedCount > 0) {
+        console.log(`[IndexedDB] ${rehydratedCount} vídeos reais restaurados com sucesso.`);
+        setActiveProject((prev) => {
+          const hHooks = hydrateClipsWithBlobs(prev.hooks);
+          const hBodies = hydrateClipsWithBlobs(prev.bodies);
+          const hCtas = hydrateClipsWithBlobs(prev.ctas);
+          const updatedProj: Project = {
+            ...prev,
+            hooks: hHooks,
+            bodies: hBodies,
+            ctas: hCtas,
+          };
+          updatedProj.generatedVariations = hydrateVariationsWithProject(
+            prev.generatedVariations,
+            updatedProj
+          );
+          return updatedProj;
+        });
+      }
+    });
 
     // Listen to local settings updates (e.g., when user saves Apify key directly in TrendingRadarView)
     const handleSettingsEvent = () => {

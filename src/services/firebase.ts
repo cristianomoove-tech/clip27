@@ -540,6 +540,7 @@ export function subscribeToUserProjects(
         const projectBase: Project = {
           id: docSnap.id,
           name: data.name || 'Projeto sem nome',
+          productKeyword: data.productKeyword || '',
           createdAt: data.createdAt || 'Recentemente',
           clipsCount: data.clipsCount || 0,
           videosGenerated: data.videosGenerated || 0,
@@ -589,7 +590,7 @@ export async function saveProjectToFirestore(userId: string, project: Project): 
     return;
   }
 
-  // Clean clips to avoid non-serializable File / Blob objects while keeping filenames
+  // Clean clips to avoid non-serializable File / Blob objects while keeping filenames and thumbnails
   const cleanClips = (clips: any[]) =>
     (clips || []).map((c) => ({
       id: c.id,
@@ -600,6 +601,7 @@ export async function saveProjectToFirestore(userId: string, project: Project): 
       fileSize: c.fileSize || '4.0 MB',
       colorTheme: c.colorTheme || '#7c3aed',
       demoData: c.demoData || null,
+      thumbnailDataUrl: c.thumbnailDataUrl || null,
     }));
 
   const cleanVariations = (vars: any[]) =>
@@ -626,6 +628,7 @@ export async function saveProjectToFirestore(userId: string, project: Project): 
     const docRef = doc(db, 'users', primaryUserId, 'projects', project.id);
     await setDoc(docRef, {
       name: project.name,
+      productKeyword: project.productKeyword || '',
       createdAt: project.createdAt || new Date().toISOString(),
       clipsCount: (project.hooks?.length || 0) + (project.bodies?.length || 0) + (project.ctas?.length || 0),
       videosGenerated: project.generatedVariations?.length || project.videosGenerated || 0,

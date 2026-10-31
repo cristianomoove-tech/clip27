@@ -1,6 +1,7 @@
 import { VideoClip, CreativeVariation, Project, SubtitleStyle } from '../types';
 import { generateMicroEdit } from './demoClips';
 import { clearAudioBufferCache } from './audioManager';
+import { persistClipToIndexedDB, getAllClipsFromIndexedDB } from './indexedDbStorage';
 
 interface StoredClipData {
   id: string;
@@ -42,6 +43,9 @@ export function registerClipBlob(
     inMemoryByName.set(nameWithoutExt.toLowerCase(), data);
   }
 
+  // Persiste no banco IndexedDB para garantir que nunca se perca ao recarregar a página
+  persistClipToIndexedDB(clipId, file, file.name, duration, thumbnailDataUrl).catch(() => {});
+
   if (thumbnailDataUrl) {
     try {
       localStorage.setItem(`clip27_thumb_${clipId}`, thumbnailDataUrl);
@@ -49,6 +53,48 @@ export function registerClipBlob(
     } catch {
       // Ignore storage quota warnings
     }
+  }
+}
+
+/**
+ * Reidrata todos os clipes binários salvos no IndexedDB para a memória ativa
+ */
+export async function hydrateStoreFromIndexedDB(): Promise<number> {
+  try {
+    const entries = await getAllClipsFromIndexedDB();
+    let rehydratedCount = 0;
+    for (const entry of entries) {
+      if (entry.blob && !inMemoryClipStore.has(entry.id)) {
+        try {
+          const url = URL.createObjectURL(entry.blob);
+          const fileObj =
+            entry.blob instanceof File
+              ? entry.blob
+              : new File([entry.blob], entry.fileName, {
+                  type: entry.blob.type || 'video/mp4',
+                });
+
+          const data: StoredClipData = {
+            id: entry.id,
+            url,
+            file: fileObj,
+            duration: entry.duration,
+            fileName: entry.fileName,
+            thumbnailDataUrl: entry.thumbnailDataUrl,
+          };
+
+          inMemoryClipStore.set(entry.id, data);
+          inMemoryByName.set(entry.fileName, data);
+          inMemoryByName.set(entry.fileName.toLowerCase(), data);
+          rehydratedCount++;
+        } catch (e) {
+          console.warn('[IndexedDB] Erro ao instanciar blob salvo:', e);
+        }
+      }
+    }
+    return rehydratedCount;
+  } catch {
+    return 0;
   }
 }
 
@@ -630,19 +676,49 @@ export function compileCartesianMatrix(
     return [];
   }
 
+  // Separação inteligente: se o usuário subiu vídeos reais em uma coluna, NUNCA usa clipes demo nas combinações!
+  const realHooks = hydratedHooks.filter((c) => !isDemoClip(c));
+  const realBodies = hydratedBodies.filter((c) => !isDemoClip(c));
+  const realCtas = hydratedCtas.filter((c) => !isDemoClip(c));
+
+  const activeHooks = realHooks.length > 0 ? realHooks : hydratedHooks;
+  const activeBodies = realBodies.length > 0 ? realBodies : hydratedBodies;
+  const activeCtas = realCtas.length > 0 ? realCtas : hydratedCtas;
+
   const usedHashes = new Set<string>();
   let counter = 0;
 
   // Only use productKeyword (or projectName if it's a real product name, never "Nova Campanha 3x3x3")
   const explicitProduct = cleanProductLabel(options?.productKeyword) || cleanProductLabel(options?.projectName);
 
-  for (let g = 0; g < hydratedHooks.length; g++) {
-    for (let c = 0; c < hydratedBodies.length; c++) {
-      for (let cta = 0; cta < hydratedCtas.length; cta++) {
+  // Matriz cartesiana 3x3x3 = exatamente 27 vídeos únicos
+  const numG = 3;
+  const numC = 3;
+  const numCta = 3;
+
+  for (let g = 0; g < numG; g++) {
+    for (let c = 0; c < numC; c++) {
+      for (let cta = 0; cta < numCta; cta++) {
         counter++;
-        const hookClip = hydratedHooks[g];
-        const bodyClip = hydratedBodies[c];
-        const ctaClip = hydratedCtas[cta];
+
+        // Atribui o clipe real do slot específico; se o slot for demo ou inexistente, faz round-robin entre os clipes reais disponíveis
+        const rawHook = hydratedHooks[g];
+        const hookClip =
+          rawHook && !isDemoClip(rawHook)
+            ? rawHook
+            : activeHooks[g % activeHooks.length];
+
+        const rawBody = hydratedBodies[c];
+        const bodyClip =
+          rawBody && !isDemoClip(rawBody)
+            ? rawBody
+            : activeBodies[c % activeBodies.length];
+
+        const rawCta = hydratedCtas[cta];
+        const ctaClip =
+          rawCta && !isDemoClip(rawCta)
+            ? rawCta
+            : activeCtas[cta % activeCtas.length];
 
         // Generate a guaranteed unique hash in background for each combination
         let microEdit = generateMicroEdit();
@@ -704,14 +780,14 @@ export function hydrateVariationsWithProject(
   const bodies = hydrateClipsWithBlobs(project.bodies || []);
   const ctas = hydrateClipsWithBlobs(project.ctas || []);
 
-  const totalPossible = hooks.length * bodies.length * ctas.length;
   const explicitProduct =
     cleanProductLabel(project.productKeyword) || cleanProductLabel(project.name);
 
+  // Se a lista de variações estiver vazia ou for diferente de 27 variações e houver clipes, recompila a matriz 3x3x3 completa
   if (
     !variations ||
     variations.length === 0 ||
-    (totalPossible > 0 && variations.length !== totalPossible)
+    variations.length !== 27
   ) {
     if (hooks.length > 0 && bodies.length > 0 && ctas.length > 0) {
       return compileCartesianMatrix(hooks, bodies, ctas, [], project.id, true, 'minimal_clean', {
@@ -721,6 +797,14 @@ export function hydrateVariationsWithProject(
     }
     return [];
   }
+
+  const realHooks = hooks.filter((c) => !isDemoClip(c));
+  const realBodies = bodies.filter((c) => !isDemoClip(c));
+  const realCtas = ctas.filter((c) => !isDemoClip(c));
+
+  const activeHooks = realHooks.length > 0 ? realHooks : hooks;
+  const activeBodies = realBodies.length > 0 ? realBodies : bodies;
+  const activeCtas = realCtas.length > 0 ? realCtas : ctas;
 
   return (variations || []).map((v, idx) => {
     let hIdx = typeof v.hookIndex === 'number' && !isNaN(v.hookIndex) ? v.hookIndex : 1;
@@ -737,9 +821,23 @@ export function hydrateVariationsWithProject(
       }
     }
 
-    const hookClip = hooks[hIdx - 1] || hooks[0] || v.hookClip;
-    const bodyClip = bodies[bIdx - 1] || bodies[0] || v.bodyClip;
-    const ctaClip = ctas[cIdx - 1] || ctas[0] || v.ctaClip;
+    const rawHook = hooks[hIdx - 1];
+    const hookClip =
+      rawHook && !isDemoClip(rawHook)
+        ? rawHook
+        : activeHooks[(hIdx - 1) % activeHooks.length] || v.hookClip;
+
+    const rawBody = bodies[bIdx - 1];
+    const bodyClip =
+      rawBody && !isDemoClip(rawBody)
+        ? rawBody
+        : activeBodies[(bIdx - 1) % activeBodies.length] || v.bodyClip;
+
+    const rawCta = ctas[cIdx - 1];
+    const ctaClip =
+      rawCta && !isDemoClip(rawCta)
+        ? rawCta
+        : activeCtas[(cIdx - 1) % activeCtas.length] || v.ctaClip;
 
     const hookDur = hookClip?.duration || 4.0;
     const bodyDur = bodyClip?.duration || 7.0;

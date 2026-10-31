@@ -289,15 +289,49 @@ export const StudioView: React.FC<StudioViewProps> = ({
     if (type === 'hook') {
       while (updatedHooks.length <= slotIndex) updatedHooks.push({} as any);
       updatedHooks[slotIndex] = newClip;
-      updatedHooks = updatedHooks.filter((c) => c && c.id);
+      // Substitui automaticamente qualquer slot DEMO remanescente nesta coluna pelo vídeo real para garantir consistência
+      for (let i = 0; i < 3; i++) {
+        if (!updatedHooks[i] || isDemoClip(updatedHooks[i])) {
+          const autoId = `user-hook-${i + 1}-${Date.now()}-${i}`;
+          registerClipBlob(autoId, file, url, detectedDuration, thumbnailDataUrl);
+          updatedHooks[i] = {
+            ...newClip,
+            id: autoId,
+            title: `Gancho ${i + 1}: ${file.name.slice(0, 24)}`,
+          };
+        }
+      }
+      updatedHooks = updatedHooks.filter((c) => c && c.id).slice(0, 3);
     } else if (type === 'body') {
       while (updatedBodies.length <= slotIndex) updatedBodies.push({} as any);
       updatedBodies[slotIndex] = newClip;
-      updatedBodies = updatedBodies.filter((c) => c && c.id);
+      for (let i = 0; i < 3; i++) {
+        if (!updatedBodies[i] || isDemoClip(updatedBodies[i])) {
+          const autoId = `user-body-${i + 1}-${Date.now()}-${i}`;
+          registerClipBlob(autoId, file, url, detectedDuration, thumbnailDataUrl);
+          updatedBodies[i] = {
+            ...newClip,
+            id: autoId,
+            title: `Corpo ${i + 1}: ${file.name.slice(0, 24)}`,
+          };
+        }
+      }
+      updatedBodies = updatedBodies.filter((c) => c && c.id).slice(0, 3);
     } else {
       while (updatedCtas.length <= slotIndex) updatedCtas.push({} as any);
       updatedCtas[slotIndex] = newClip;
-      updatedCtas = updatedCtas.filter((c) => c && c.id);
+      for (let i = 0; i < 3; i++) {
+        if (!updatedCtas[i] || isDemoClip(updatedCtas[i])) {
+          const autoId = `user-cta-${i + 1}-${Date.now()}-${i}`;
+          registerClipBlob(autoId, file, url, detectedDuration, thumbnailDataUrl);
+          updatedCtas[i] = {
+            ...newClip,
+            id: autoId,
+            title: `CTA ${i + 1}: ${file.name.slice(0, 24)}`,
+          };
+        }
+      }
+      updatedCtas = updatedCtas.filter((c) => c && c.id).slice(0, 3);
     }
 
     let newVariations = currentProj.generatedVariations;
@@ -500,6 +534,26 @@ export const StudioView: React.FC<StudioViewProps> = ({
     }
 
     targetSlots = targetSlots.filter((c) => c && c.id).slice(0, 3);
+
+    // Se o usuário subiu menos de 3 arquivos (ex: 1 ou 2 vídeos), preenche os 3 slots replicando os vídeos reais
+    if (targetSlots.length > 0 && targetSlots.length < 3) {
+      const baseClips = [...targetSlots];
+      while (targetSlots.length < 3) {
+        const slotIdx = targetSlots.length;
+        const sourceClip = baseClips[slotIdx % baseClips.length];
+        const cloneId = `user-${type}-${slotIdx + 1}-${Date.now()}-${slotIdx}`;
+        const sourceStored = getClipBlobData(sourceClip.id) || getClipBlobData(sourceClip.fileName);
+        if (sourceStored) {
+          registerClipBlob(cloneId, sourceStored.file, sourceStored.url, sourceClip.duration, sourceClip.thumbnailDataUrl);
+        }
+        targetSlots.push({
+          ...sourceClip,
+          id: cloneId,
+          title: `${label} ${slotIdx + 1}: ${sourceClip.fileName || sourceClip.title}`,
+        });
+      }
+    }
+
     clearAudioBufferCache();
 
     // Limpar o valor do input para permitir reenvio dos mesmos arquivos se necessário
@@ -676,6 +730,76 @@ export const StudioView: React.FC<StudioViewProps> = ({
     showNotice('Todos os clipes foram removidos.');
   };
 
+  const hasRealHook = project.hooks.some((c) => !isDemoClip(c));
+  const hasRealBody = project.bodies.some((c) => !isDemoClip(c));
+  const hasRealCta = project.ctas.some((c) => !isDemoClip(c));
+  const hasAnyReal = hasRealHook || hasRealBody || hasRealCta;
+  const hasAnyDemo =
+    project.hooks.some(isDemoClip) ||
+    project.bodies.some(isDemoClip) ||
+    project.ctas.some(isDemoClip);
+  const hasLingeringDemos = hasAnyReal && hasAnyDemo;
+
+  const handlePropagateRealClipsToAllSlots = () => {
+    clearAudioBufferCache();
+    const currentProj = latestProjectRef.current;
+
+    const fillColumn = (clips: VideoClip[], type: 'hook' | 'body' | 'cta') => {
+      const real = clips.filter((c) => !isDemoClip(c));
+      const label = type === 'hook' ? 'Gancho' : type === 'body' ? 'Corpo' : 'CTA';
+      if (real.length === 0) return clips;
+      const result: VideoClip[] = [];
+      for (let i = 0; i < 3; i++) {
+        const existing = clips[i];
+        if (existing && !isDemoClip(existing)) {
+          result.push(existing);
+        } else {
+          const src = real[i % real.length];
+          const cloneId = `user-${type}-${i + 1}-${Date.now()}-${i}`;
+          const stored = getClipBlobData(src.id) || getClipBlobData(src.fileName);
+          if (stored) {
+            registerClipBlob(cloneId, stored.file, stored.url, src.duration, src.thumbnailDataUrl);
+          }
+          result.push({
+            ...src,
+            id: cloneId,
+            title: `${label} ${i + 1}: ${src.fileName || src.title}`,
+          });
+        }
+      }
+      return result;
+    };
+
+    const nextHooks = fillColumn(currentProj.hooks, 'hook');
+    const nextBodies = fillColumn(currentProj.bodies, 'body');
+    const nextCtas = fillColumn(currentProj.ctas, 'cta');
+
+    const newVariations = compileCartesianMatrix(
+      nextHooks,
+      nextBodies,
+      nextCtas,
+      [],
+      currentProj.id,
+      true,
+      'minimal_clean',
+      {
+        productKeyword: productKeywordInput.trim() || currentProj.productKeyword,
+        projectName: currentProj.name,
+      }
+    );
+
+    updateProjectWithSave({
+      hooks: nextHooks,
+      bodies: nextBodies,
+      ctas: nextCtas,
+      clipsCount: nextHooks.length + nextBodies.length + nextCtas.length,
+      generatedVariations: newVariations,
+      videosGenerated: newVariations.length,
+    });
+
+    showNotice('⚡ Todos os slots demo foram substituídos com sucesso por seus vídeos reais! 27 combinações 100% reais geradas.');
+  };
+
   // Cartesian 3x3x3 matrix calculation
   const curProj = latestProjectRef.current;
   const totalPossible = curProj.hooks.length * curProj.bodies.length * curProj.ctas.length;
@@ -823,6 +947,32 @@ export const StudioView: React.FC<StudioViewProps> = ({
           </div>
           <button onClick={() => setUploadNotice(null)} className="text-slate-400 hover:text-white p-1">
             <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Banner de Sincronização Inteligente: Elimina slots demo remanescentes com 1 clique */}
+      {hasLingeringDemos && (
+        <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-950/70 via-purple-950/70 to-slate-950 border border-amber-500/40 shadow-[0_0_30px_rgba(245,158,11,0.2)] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-fade-in">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0">
+              <Zap className="w-5 h-5 text-amber-400" />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-amber-300">
+                Atenção: Você subiu vídeos reais, mas ainda há slots com clipes DEMO de teste!
+              </p>
+              <p className="text-[11px] text-slate-300 mt-0.5">
+                Para que todas as 27 combinações fiquem 100% perfeitas e com seus vídeos reais, preencha os slots restantes automaticamente.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={handlePropagateRealClipsToAllSlots}
+            className="px-4 py-2.5 rounded-xl text-xs font-black text-slate-950 bg-amber-400 hover:bg-amber-300 border border-amber-300 shadow-lg shadow-amber-400/30 flex items-center gap-2 transition-all transform hover:scale-[1.02] cursor-pointer shrink-0"
+          >
+            <Sparkles className="w-4 h-4 text-slate-950" />
+            <span>Preencher Slots Demo com Meus Vídeos Reais</span>
           </button>
         </div>
       )}
