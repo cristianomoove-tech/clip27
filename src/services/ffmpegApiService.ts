@@ -140,3 +140,4 @@ export async function pollFFmpegProgress(): Promise<FFmpegRenderProgress | null>
 export function getFFmpegZipDownloadUrl(): string {
   return `${SERVER_URL}/api/download-zip`;
 }
+
