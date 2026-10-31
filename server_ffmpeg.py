@@ -24,6 +24,9 @@ from motor_ffmpeg import (
     gerar_27_videos, 
     verificar_ffmpeg, 
     extrair_legendas_whisper,
+    auto_split_video_com_whisper_e_llm,
+    gerar_arquivo_ass,
+    corrigir_legendas_openrouter,
     FFMPEG_BIN
 )
 
@@ -128,6 +131,25 @@ class ServidorClip27Handler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"erro": str(e)}).encode("utf-8"))
                 return
 
+        # Servir clipe individual do motor_uploads se solicitado
+        if caminho.startswith("/api/clip/"):
+            nome_arquivo = caminho.replace("/api/clip/", "")
+            clip_file = PASTA_UPLOADS / nome_arquivo
+            if clip_file.exists():
+                tamanho = os.path.getsize(clip_file)
+                self.send_response(200)
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Content-Type", "video/mp4")
+                self.send_header("Content-Length", str(tamanho))
+                self.end_headers()
+                with open(clip_file, "rb") as f:
+                    shutil.copyfileobj(f, self.wfile)
+                return
+            else:
+                self._enviar_headers_cors(404)
+                self.wfile.write(json.dumps({"erro": "Clipe não encontrado."}).encode("utf-8"))
+                return
+
         # Servir vídeo MP4 individual se solicitado
         if caminho.startswith("/api/video/"):
             nome_arquivo = caminho.replace("/api/video/", "")
@@ -184,6 +206,50 @@ class ServidorClip27Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._enviar_headers_cors(500)
                 self.wfile.write(json.dumps({"erro": f"Falha no upload: {str(e)}"}).encode("utf-8"))
+            return
+
+        if caminho == "/api/auto-split":
+            # Auto-Splitter com IA: recebe vídeo longo, transcreve com faster-whisper, analisa com LLM e fatia com FFmpeg
+            try:
+                params = parse_qs(parsed.query)
+                slot_index = params.get('slot', ['1'])[0]
+                api_key = params.get('api_key', [''])[0]
+                modelo = params.get('modelo', ['google/gemini-2.0-flash-exp:free'])[0]
+
+                tamanho_corpo = int(self.headers.get('content-length', 0))
+                dados = self.rfile.read(tamanho_corpo)
+
+                nome_bruto = f"video_bruto_{slot_index}.mp4"
+                caminho_bruto = PASTA_UPLOADS / nome_bruto
+                with open(caminho_bruto, "wb") as f:
+                    f.write(dados)
+
+                print(f"[*] Auto-Splitter acionado para o vídeo bruto slot {slot_index} ({len(dados)/(1024*1024):.1f} MB)...")
+
+                res_split = auto_split_video_com_whisper_e_llm(
+                    caminho_video=str(caminho_bruto),
+                    pasta_saida=str(PASTA_UPLOADS),
+                    prefixo=f"split_{slot_index}",
+                    api_key_openrouter=api_key if api_key else None,
+                    modelo_llm=modelo
+                )
+
+                # Copia automaticamente para os nomes padrão de slots: gancho_X.mp4, corpo_X.mp4, cta_X.mp4
+                shutil.copyfile(res_split["gancho"]["arquivo"], str(PASTA_UPLOADS / f"gancho_{slot_index}.mp4"))
+                shutil.copyfile(res_split["corpo"]["arquivo"], str(PASTA_UPLOADS / f"corpo_{slot_index}.mp4"))
+                shutil.copyfile(res_split["cta"]["arquivo"], str(PASTA_UPLOADS / f"cta_{slot_index}.mp4"))
+
+                res_split["gancho"]["url"] = f"http://localhost:{PORTA}/api/clip/gancho_{slot_index}.mp4"
+                res_split["corpo"]["url"] = f"http://localhost:{PORTA}/api/clip/corpo_{slot_index}.mp4"
+                res_split["cta"]["url"] = f"http://localhost:{PORTA}/api/clip/cta_{slot_index}.mp4"
+                res_split["slot"] = int(slot_index)
+
+                self._enviar_headers_cors(200)
+                self.wfile.write(json.dumps(res_split, ensure_ascii=False).encode("utf-8"))
+            except Exception as e:
+                print(f"[!] Erro no endpoint auto-split: {e}")
+                self._enviar_headers_cors(500)
+                self.wfile.write(json.dumps({"erro": f"Falha no Auto-Splitter: {str(e)}"}).encode("utf-8"))
             return
 
         if caminho == "/api/gerar-27":

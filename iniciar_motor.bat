@@ -22,6 +22,13 @@ if %errorlevel% neq 0 (
     echo Certifique-se de que o ffmpeg.exe esta no PATH ou na pasta do projeto.
 )
 
+echo [*] Verificando pacote de IA faster-whisper...
+python -c "import faster_whisper" >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [*] Instalando faster-whisper na sua maquina (na 1a vez pode demorar alguns instantes enquanto baixa os pacotes)...
+    pip install faster-whisper
+)
+
 echo [*] Iniciando API do Servidor FFmpeg na porta 5050...
 echo Acesse o Studio Clip27 no navegador: o motor sera detectado automaticamente!
 echo Pressione Ctrl+C para encerrar o servidor.

@@ -141,3 +141,56 @@ export function getFFmpegZipDownloadUrl(): string {
   return `${SERVER_URL}/api/download-zip`;
 }
 
+export interface AutoSplitSegment {
+  arquivo: string;
+  url: string;
+  inicio: number;
+  fim: number;
+  duracao: number;
+}
+
+export interface AutoSplitResponse {
+  sucesso: boolean;
+  duracao_total: number;
+  slot: number;
+  gancho: AutoSplitSegment;
+  corpo: AutoSplitSegment;
+  cta: AutoSplitSegment;
+  legendas_detectadas: Array<{ start: number; end: number; text: string }>;
+  erro?: string;
+}
+
+/**
+ * Envia um vídeo longo para o Auto-Splitter do backend:
+ * Transcreve com faster-whisper, identifica timestamps com OpenRouter e fatia em Gancho, Corpo e CTA.
+ */
+export async function autoSplitVideoViaFFmpegServer(
+  file: File,
+  slotIndex: 1 | 2 | 3,
+  openRouterApiKey?: string,
+  model?: string
+): Promise<AutoSplitResponse> {
+  const buffer = await file.arrayBuffer();
+  const queryParams = new URLSearchParams({
+    slot: String(slotIndex),
+    api_key: openRouterApiKey || '',
+    modelo: model || 'google/gemini-2.0-flash-exp:free',
+  });
+
+  const res = await fetch(`${SERVER_URL}/api/auto-split?${queryParams.toString()}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': file.type || 'video/mp4',
+    },
+    body: buffer,
+  });
+
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.erro || `Falha no Auto-Splitter (Status ${res.status})`);
+  }
+
+  return await res.json();
+}
+
+

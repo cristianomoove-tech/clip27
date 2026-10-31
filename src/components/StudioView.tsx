@@ -30,8 +30,9 @@ import {
 import { renderHighImpactCoverToPngBlob } from '../services/videoRenderer';
 import { clearAudioBufferCache } from '../services/audioManager';
 import { BatchDownloadModal } from './BatchDownloadModal';
+import { AutoSplitModal } from './AutoSplitModal';
 import { checkFFmpegServerHealth, uploadClipToFFmpegServer } from '../services/ffmpegApiService';
-import { Cpu, Flame } from 'lucide-react';
+import { Cpu, Flame, Scissors } from 'lucide-react';
 
 interface StudioViewProps {
   project: Project;
@@ -48,6 +49,7 @@ export const StudioView: React.FC<StudioViewProps> = ({
 }) => {
   const [isGeneratingMatrix, setIsGeneratingMatrix] = useState(false);
   const [isZipModalOpen, setIsZipModalOpen] = useState(false);
+  const [isAutoSplitModalOpen, setIsAutoSplitModalOpen] = useState(false);
   const [uploadNotice, setUploadNotice] = useState<string | null>(null);
   const [productKeywordInput, setProductKeywordInput] = useState<string>(
     project.productKeyword || ''
@@ -838,6 +840,85 @@ export const StudioView: React.FC<StudioViewProps> = ({
     }, 200);
   };
 
+  const handleClipsFromAutoSplit = (
+    clipsBySlot: {
+      slot: 1 | 2 | 3;
+      hook: VideoClip;
+      body: VideoClip;
+      cta: VideoClip;
+    }[]
+  ) => {
+    clearAudioBufferCache();
+    const currentProj = latestProjectRef.current;
+    let nextHooks = [...currentProj.hooks];
+    let nextBodies = [...currentProj.bodies];
+    let nextCtas = [...currentProj.ctas];
+
+    // Se a coluna ainda tiver clipes demo, limpamos para dar lugar aos clipes reais fatiados
+    if (nextHooks.some(isDemoClip)) nextHooks = [];
+    if (nextBodies.some(isDemoClip)) nextBodies = [];
+    if (nextCtas.some(isDemoClip)) nextCtas = [];
+
+    for (const item of clipsBySlot) {
+      const idx = item.slot - 1;
+      while (nextHooks.length <= idx) nextHooks.push({} as any);
+      while (nextBodies.length <= idx) nextBodies.push({} as any);
+      while (nextCtas.length <= idx) nextCtas.push({} as any);
+
+      nextHooks[idx] = item.hook;
+      nextBodies[idx] = item.body;
+      nextCtas[idx] = item.cta;
+    }
+
+    // Se o usuário subiu apenas 1 vídeo longo (que gerou Gancho 1, Corpo 1, CTA 1),
+    // preenche os 3 slots automaticamente para já liberar as 27 variações!
+    const fillUpTo3 = (clips: VideoClip[], type: 'hook' | 'body' | 'cta') => {
+      const real = clips.filter((c) => c && c.id && !isDemoClip(c));
+      if (real.length === 0) return clips;
+      const res = [...real];
+      while (res.length < 3) {
+        const slotIdx = res.length;
+        const src = real[slotIdx % real.length];
+        const cloneId = `user-${type}-${slotIdx + 1}-${Date.now()}-${slotIdx}`;
+        res.push({
+          ...src,
+          id: cloneId,
+          title: `${type === 'hook' ? 'Gancho' : type === 'body' ? 'Corpo' : 'CTA'} ${slotIdx + 1}: ${src.fileName || src.title}`,
+        });
+      }
+      return res.slice(0, 3);
+    };
+
+    nextHooks = fillUpTo3(nextHooks, 'hook');
+    nextBodies = fillUpTo3(nextBodies, 'body');
+    nextCtas = fillUpTo3(nextCtas, 'cta');
+
+    const newVariations = compileCartesianMatrix(
+      nextHooks,
+      nextBodies,
+      nextCtas,
+      [],
+      currentProj.id,
+      true,
+      'minimal_clean',
+      {
+        productKeyword: productKeywordInput.trim() || currentProj.productKeyword,
+        projectName: currentProj.name,
+      }
+    );
+
+    updateProjectWithSave({
+      hooks: nextHooks,
+      bodies: nextBodies,
+      ctas: nextCtas,
+      clipsCount: nextHooks.length + nextBodies.length + nextCtas.length,
+      generatedVariations: newVariations,
+      videosGenerated: newVariations.length,
+    });
+
+    showNotice(`🎉 Auto-Splitter concluiu com sucesso! Vídeos fatiados e 27 combinações geradas.`);
+  };
+
   return (
     <div id="tab-estudio" className="space-y-8 animate-fade-in pb-12">
       {/* Top Header of Studio with Autosave Status */}
@@ -917,6 +998,15 @@ export const StudioView: React.FC<StudioViewProps> = ({
               </span>
             </button>
           )}
+
+          <button
+            onClick={() => setIsAutoSplitModalOpen(true)}
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold text-amber-200 bg-amber-950/40 hover:bg-amber-900/50 border border-amber-500/40 shadow-[0_0_15px_rgba(245,158,11,0.2)] transition-all cursor-pointer"
+            title="Subir de 1 a 3 vídeos inteiros sem cortes: a IA transcreve, detecta Gancho, Corpo e CTA e fatia tudo automaticamente"
+          >
+            <Scissors className="w-3.5 h-3.5 text-amber-400" />
+            <span>Auto-Splitter com IA</span>
+          </button>
 
           <button
             onClick={handleLoadDemoClips}
@@ -1735,6 +1825,14 @@ export const StudioView: React.FC<StudioViewProps> = ({
         onClose={() => setIsZipModalOpen(false)}
         project={project}
         variations={project.generatedVariations}
+      />
+
+      {/* Auto-Splitter Modal com IA */}
+      <AutoSplitModal
+        isOpen={isAutoSplitModalOpen}
+        onClose={() => setIsAutoSplitModalOpen(false)}
+        ffmpegOnline={ffmpegOnline}
+        onClipsGenerated={handleClipsFromAutoSplit}
       />
     </div>
   );
