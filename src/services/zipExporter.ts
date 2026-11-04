@@ -2,7 +2,6 @@ import JSZip from 'jszip';
 import { CreativeVariation } from '../types';
 import {
   renderSingleVariationToBlob,
-  renderHighImpactCoverToPngBlob,
 } from './videoRenderer';
 import {
   buildVariationCoverAndSeo,
@@ -80,7 +79,7 @@ export async function exportVariationsToZip(
       // 1. Render the variation to a real MP4 video blob with studio audio and embedded 1st-frame cover
       const videoBlob = await renderSingleVariationToBlob(variation, (clipPct) => {
         if (onProgress) {
-          const overallPct = Math.round(((i + (clipPct * 0.9) / 100) / total) * 100);
+          const overallPct = Math.round(((i + (clipPct * 0.99) / 100) / total) * 100);
           onProgress({
             currentIndex: i + 1,
             totalCount: total,
@@ -94,23 +93,8 @@ export async function exportVariationsToZip(
       const videoFileName = `${code}_${hash}.mp4`;
       folder.file(videoFileName, videoBlob);
 
-      // 2. Render the High-Impact Cover Image (.PNG) with the 1st frame of the Hook as background
-      if (onProgress) {
-        onProgress({
-          currentIndex: i + 1,
-          totalCount: total,
-          currentCode: code,
-          percent: Math.round(((i + 0.95) / total) * 100),
-          statusText: `Gerando Capa de Alto Impacto PNG (${code})...`,
-        });
-      }
-
-      const coverBlob = await renderHighImpactCoverToPngBlob(variation, 720, 1280);
-      const coverFileName = `CAPA_${safeCode}_${hash}.png`;
-      folder.file(coverFileName, coverBlob);
-
       // Micro-pause to allow browser GC to reclaim freed GPU/VRAM memory between video variations
-      await new Promise((r) => setTimeout(r, 60));
+      await new Promise((r) => setTimeout(r, 40));
     } catch (err) {
       console.warn(`Erro ao renderizar variação ${code}, pulando:`, err);
     }
@@ -119,18 +103,18 @@ export async function exportVariationsToZip(
   // Add comprehensive campaign report and metadata
   const reportLines = [
     `================================================================`,
-    `CLIP27 AI — PACOTE DE VÍDEOS MP4 + CAPAS DE ALTO IMPACTO (.PNG)`,
+    `CLIP27 AI — PACOTE DE 27 VÍDEOS MP4 COM CAPA EMBUTIDA`,
     `Data de Exportação: ${new Date().toLocaleString('pt-BR')}`,
-    `Total Exportado: ${total} Vídeos (.mp4) + ${total} Capas de Alto Impacto (.png)`,
-    `Formato de Saída: MP4 Vertical 9:16 HD 720p (720x1280) + Capas PNG 720p + Legendas SEO`,
+    `Total Exportado: ${total} Vídeos (.mp4) com Capa de Alto Impacto Integrada no 1º Frame`,
+    `Formato de Saída: MP4 Vertical 9:16 HD 720p (720x1280) + Áudio Studio + Legendas SEO`,
     `================================================================\n`,
     `ESTRATÉGIA ANTI-SHADOWBAN & ÁUDIO MASTERIZADO TIKTOK / REELS:`,
     `- Formato .MP4 nativo HD 720p 100% fluido a 30 FPS cravados, taxa de 3.5 Mbps otimizada para TikTok e Reels.`,
-    `- Capas .PNG 9:16 HD 720p de Alto Impacto geradas com a 1ª imagem real de cada Gancho.`,
+    `- A Capa de Alto Impacto está EMBUTIDA diretamente no 1º frame do vídeo (pronta para virar thumbnail no TikTok/Reels sem poluir a pasta com arquivos de imagem soltos).`,
     `- Áudio em 48kHz / 320kbps com equalização vocal, filtro anti-ruído e nivelamento -14 LUFS.`,
     `- Cada vídeo possui fingerprint e hash hexadecimal únicos para quebrar deduplicação.`,
     `- Micro-edits embutidos: Zoom (1.01x a 1.04x), Velocidade (0.98x a 1.02x).\n`,
-    `MAPA COMPLETO DOS VÍDEOS, CAPAS E LEGENDAS SEO:\n`,
+    `MAPA COMPLETO DOS VÍDEOS E LEGENDAS SEO:\n`,
   ];
 
   sanitizedVariations.forEach((v) => {
@@ -138,8 +122,8 @@ export async function exportVariationsToZip(
     const hash = v.microEdit?.hashHex || 'CLEAN';
     reportLines.push(
       `[${v.code}]` +
-        `\n  Arquivo de Vídeo (MP4 Limpo): ${v.code}_${hash}.mp4` +
-        `\n  Arquivo da Capa (PNG 9:16): CAPA_${safeCode}_${hash}.png` +
+        `\n  Arquivo de Vídeo (MP4 com Capa Embutida): ${v.code}_${hash}.mp4` +
+        `\n  Capa: Já integrada diretamente no 1º frame do vídeo MP4` +
         `\n  Gancho: ${v.hookClip?.fileName || v.hookClip?.title}` +
         `\n  Corpo: ${v.bodyClip?.fileName || v.bodyClip?.title}` +
         `\n  CTA: ${v.ctaClip?.fileName || v.ctaClip?.title}` +

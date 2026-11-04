@@ -989,9 +989,9 @@ export const StudioView: React.FC<StudioViewProps> = ({
               className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black text-white bg-gradient-to-r from-purple-600 via-fuchsia-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 border border-fuchsia-400/50 shadow-[0_0_20px_rgba(217,70,239,0.4)] transition-all transform hover:scale-[1.02] cursor-pointer"
             >
               <FolderArchive className="w-4 h-4 text-fuchsia-200" />
-              <span>Baixar Vídeos + Capas (.ZIP)</span>
+              <span>Baixar os 27 Vídeos (.ZIP)</span>
               <span className="px-1.5 py-0.5 rounded-full bg-emerald-500/30 text-[10px] font-mono text-emerald-300 font-bold">
-                MP4 + PNG
+                MP4 (Capa Inclusa)
               </span>
               <span className="px-1.5 py-0.5 rounded-full bg-black/40 text-[10px] font-mono">
                 {project.generatedVariations.length}
@@ -1605,7 +1605,7 @@ export const StudioView: React.FC<StudioViewProps> = ({
                 className="w-full sm:w-auto min-h-[44px] flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-black text-xs text-white bg-gradient-to-r from-purple-600 via-fuchsia-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 shadow-[0_0_20px_rgba(217,70,239,0.35)] transition-all transform hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
               >
                 <FolderArchive className="w-4 h-4 text-fuchsia-200" />
-                <span>Baixar Vídeos + Capas (.ZIP)</span>
+                <span>Baixar os 27 Vídeos (.ZIP)</span>
                 <span className="px-1.5 py-0.5 rounded-full bg-black/40 text-[10px] font-mono">
                   {project.generatedVariations.length}
                 </span>

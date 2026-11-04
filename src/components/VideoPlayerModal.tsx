@@ -1143,7 +1143,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                   className="w-full py-2 px-4 rounded-xl font-bold text-xs text-purple-200 bg-purple-950/40 hover:bg-purple-900/60 border border-purple-500/30 flex items-center justify-center gap-2 transition-all cursor-pointer"
                 >
                   <FolderArchive className="w-3.5 h-3.5 text-fuchsia-400" />
-                  <span>Baixar Todos os {totalVariationsCount} Vídeos (.ZIP)</span>
+                  <span>Baixar os {totalVariationsCount} Vídeos (.ZIP) - Capa Inclusa</span>
                 </button>
               )}
 

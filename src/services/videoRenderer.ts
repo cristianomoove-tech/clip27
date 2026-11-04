@@ -460,8 +460,8 @@ export async function renderSingleVariationToBlob(
   drawImperceptibleHashPixel(ctx, variation, canvas.width, canvas.height);
 
   const speed = variation.microEdit?.speed || 1.0;
-  // 67ms (2 frames at 30fps): establishes initial keyframe as high-impact cover without delaying playback
-  const COVER_DURATION = 0.067;
+  // 100ms (3 frames a 30fps): estabelece o keyframe inicial com a Capa de Alto Impacto sem atrasar a reprodução
+  const COVER_DURATION = 0.10;
   const hookDur = (variation.hookClip?.duration || 4.0) / speed;
   const bodyDur = (variation.bodyClip?.duration || 7.0) / speed;
   const ctaDur = (variation.ctaClip?.duration || 3.5) / speed;

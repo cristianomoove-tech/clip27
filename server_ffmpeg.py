@@ -113,7 +113,8 @@ class ServidorClip27Handler(BaseHTTPRequestHandler):
                 with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
                     for root, _, files in os.walk(PASTA_SAIDA):
                         for file in files:
-                            if file.lower().endswith(('.mp4', '.png', '.txt')):
+                            # Apenas arquivos .mp4 com a capa já incorporada no vídeo (sem arquivos .png soltos)
+                            if file.lower().endswith('.mp4'):
                                 file_path = os.path.join(root, file)
                                 arcname = os.path.relpath(file_path, PASTA_SAIDA)
                                 zipf.write(file_path, arcname)

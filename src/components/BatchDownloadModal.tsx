@@ -164,9 +164,9 @@ export const BatchDownloadModal: React.FC<BatchDownloadModalProps> = ({
             </div>
             <div>
               <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <span>Baixar Vídeos + Capas (.ZIP)</span>
+                <span>Baixar os 27 Vídeos (.ZIP)</span>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold">
-                  MP4 + CAPA NO 1º FRAME
+                  MP4 · CAPA INCLUSA NO VÍDEO
                 </span>
                 <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-500/30">
                   {variations.length} vídeos
