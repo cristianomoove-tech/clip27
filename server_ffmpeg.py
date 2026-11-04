@@ -9,6 +9,15 @@ e micro-edits anti-shadowban.
 
 import os
 import sys
+
+# Garante suporte a UTF-8 em terminais Windows (evita UnicodeEncodeError charmap cp1252)
+if sys.platform.startswith("win"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 import json
 import time
 import shutil
@@ -17,7 +26,6 @@ import threading
 from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
-import cgi
 
 # Importa o motor de renderização
 from motor_ffmpeg import (
@@ -179,7 +187,8 @@ class ServidorClip27Handler(BaseHTTPRequestHandler):
         if caminho == "/api/upload-clip":
             # Recebe o envio binário de um clipe específico (ex: Gancho 1, Gancho 2, etc.)
             try:
-                ctype, pdict = cgi.parse_header(self.headers.get('content-type', ''))
+                content_type_header = self.headers.get('content-type', '')
+                ctype = content_type_header.split(';')[0].strip()
                 params = parse_qs(parsed.query)
                 clip_tipo = params.get('tipo', ['gancho'])[0] # 'gancho', 'corpo', 'cta'
                 clip_slot = params.get('slot', ['1'])[0]      # '1', '2', '3'

@@ -11,6 +11,15 @@ Clip27 IA - Motor Combinatório e Renderizador de Vídeos com FFmpeg Nativo
 
 import os
 import sys
+
+# Garante suporte a UTF-8 em terminais Windows (evita UnicodeEncodeError charmap cp1252)
+if sys.platform.startswith("win"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 import re
 import glob
 import json

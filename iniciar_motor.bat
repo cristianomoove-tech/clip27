@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 title Clip27 - Motor FFmpeg Combinatorio Nativo
 color 0b
 
