@@ -30,6 +30,9 @@ if %errorlevel% neq 0 (
     pip install faster-whisper
 )
 
+echo [*] Configurando inicializacao automatica com o Windows...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0configurar_inicializacao.ps1" >nul 2>&1
+
 echo [*] Iniciando API do Servidor FFmpeg na porta 5050...
 echo Acesse o Studio Clip27 no navegador: o motor sera detectado automaticamente!
 echo Pressione Ctrl+C para encerrar o servidor.

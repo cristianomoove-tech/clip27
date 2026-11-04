@@ -67,19 +67,25 @@ class ServidorClip27Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Access-Control-Request-Private-Network")
+        self.send_header("Access-Control-Allow-Private-Network", "true")
         self.send_header("Content-Type", content_type)
         self.end_headers()
 
     def do_OPTIONS(self):
-        # Suporte a CORS Pre-flight do navegador
-        self._enviar_headers_cors(204)
+        # Suporte a CORS Pre-flight do navegador e Private Network Access (PNA)
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Access-Control-Request-Private-Network")
+        self.send_header("Access-Control-Allow-Private-Network", "true")
+        self.end_headers()
 
     def do_GET(self):
         parsed = urlparse(self.path)
         caminho = parsed.path
 
-        if caminho in ["/", "/health", "/api/status"]:
+        if caminho in ["/health", "/api/status"]:
             ffmpeg_ok = verificar_ffmpeg()
             whisper_ok = True
             try:
@@ -176,6 +182,42 @@ class ServidorClip27Handler(BaseHTTPRequestHandler):
             else:
                 self._enviar_headers_cors(404)
                 self.wfile.write(json.dumps({"erro": "Vídeo não encontrado."}).encode("utf-8"))
+                return
+
+        # Servir Frontend Web App compilado (dist) para acesso local via http://localhost:5050
+        PASTA_DIST = PASTA_PROJETO / "dist"
+        if PASTA_DIST.exists() and not caminho.startswith("/api/"):
+            rel = caminho.lstrip("/")
+            arquivo_alvo = PASTA_DIST / rel if rel else PASTA_DIST / "index.html"
+            if not arquivo_alvo.exists() or arquivo_alvo.is_dir():
+                arquivo_alvo = PASTA_DIST / "index.html"
+
+            if arquivo_alvo.exists() and arquivo_alvo.is_file():
+                ext = arquivo_alvo.suffix.lower()
+                mimetypes = {
+                    ".html": "text/html; charset=utf-8",
+                    ".js": "application/javascript; charset=utf-8",
+                    ".css": "text/css; charset=utf-8",
+                    ".json": "application/json; charset=utf-8",
+                    ".png": "image/png",
+                    ".jpg": "image/jpeg",
+                    ".jpeg": "image/jpeg",
+                    ".svg": "image/svg+xml",
+                    ".ico": "image/x-icon",
+                    ".woff": "font/woff",
+                    ".woff2": "font/woff2",
+                    ".mp4": "video/mp4",
+                }
+                ctype = mimetypes.get(ext, "application/octet-stream")
+                tamanho = os.path.getsize(arquivo_alvo)
+                self.send_response(200)
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Private-Network", "true")
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(tamanho))
+                self.end_headers()
+                with open(arquivo_alvo, "rb") as f:
+                    shutil.copyfileobj(f, self.wfile)
                 return
 
         self._enviar_headers_cors(404)

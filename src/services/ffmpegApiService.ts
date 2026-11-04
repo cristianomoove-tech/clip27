@@ -193,4 +193,26 @@ export async function autoSplitVideoViaFFmpegServer(
   return await res.json();
 }
 
+/**
+ * Dispara o inicializador automático do motor nativo via protocolo do Windows clip27://
+ * Utiliza iframe oculto no estilo Zoom/Figma para acionar o motor em segundo plano sem descarregar a página.
+ */
+export function triggerNativeMotorStartup(): void {
+  try {
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    iframe.src = 'clip27://start';
+    document.body.appendChild(iframe);
+    setTimeout(() => {
+      try {
+        if (document.body.contains(iframe)) {
+          document.body.removeChild(iframe);
+        }
+      } catch {}
+    }, 3000);
+  } catch {
+    window.location.href = 'clip27://start';
+  }
+}
+
 

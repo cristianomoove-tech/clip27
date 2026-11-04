@@ -12,7 +12,8 @@ import {
   RefreshCw,
   FolderArchive,
   Cpu,
-  Flame
+  Flame,
+  Zap
 } from 'lucide-react';
 import { CreativeVariation, Project } from '../types';
 import { exportVariationsToZip, ZipExportProgress } from '../services/zipExporter';
@@ -21,7 +22,8 @@ import {
   triggerFFmpegBatchRender, 
   pollFFmpegProgress, 
   getFFmpegZipDownloadUrl,
-  FFmpegServerStatus 
+  FFmpegServerStatus,
+  triggerNativeMotorStartup
 } from '../services/ffmpegApiService';
 
 interface BatchDownloadModalProps {
@@ -45,6 +47,7 @@ export const BatchDownloadModal: React.FC<BatchDownloadModalProps> = ({
   const [resolution, setResolution] = useState<'720p' | '1080p'>('720p');
   const [microEdits, setMicroEdits] = useState(true);
   const [isNativeFFmpegRunning, setIsNativeFFmpegRunning] = useState(false);
+  const [isStartingMotor, setIsStartingMotor] = useState(false);
   const abortRef = useRef(false);
 
   // Check FFmpeg server status on open
@@ -53,6 +56,24 @@ export const BatchDownloadModal: React.FC<BatchDownloadModalProps> = ({
       checkFFmpegServerHealth().then(setFfmpegStatus);
     }
   }, [isOpen]);
+
+  const handleStartNativeMotorModal = async () => {
+    setIsStartingMotor(true);
+    triggerNativeMotorStartup();
+    let tries = 0;
+    const interval = setInterval(async () => {
+      tries++;
+      const st = await checkFFmpegServerHealth();
+      if (st.online) {
+        setFfmpegStatus(st);
+        setIsStartingMotor(false);
+        clearInterval(interval);
+      } else if (tries >= 12) {
+        setIsStartingMotor(false);
+        clearInterval(interval);
+      }
+    }, 1000);
+  };
 
   if (!isOpen) return null;
 
@@ -233,13 +254,23 @@ export const BatchDownloadModal: React.FC<BatchDownloadModalProps> = ({
                 </div>
               </div>
             ) : (
-              <div className="p-3 rounded-xl bg-purple-950/30 border border-purple-500/20 text-xs text-slate-300 space-y-1">
-                <div className="flex items-center gap-2 text-purple-300 font-bold text-[11px]">
-                  <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-                  <span>Dica de Especialista:</span>
+              <div className="p-3.5 rounded-2xl bg-amber-950/30 border border-amber-500/30 text-xs text-slate-300 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-amber-300 font-bold text-[11px]">
+                    <Zap className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Aceleração de Hardware: Motor FFmpeg</span>
+                  </div>
+                  <button
+                    onClick={handleStartNativeMotorModal}
+                    disabled={isStartingMotor}
+                    className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-gradient-to-r from-amber-500/20 to-orange-500/20 hover:from-amber-500/30 border border-amber-500/40 text-amber-200 font-bold text-[11px] cursor-pointer transition-all shadow-sm"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+                    <span>{isStartingMotor ? 'Conectando...' : 'Iniciar Motor (1-Clique)'}</span>
+                  </button>
                 </div>
-                <p className="text-[11px] text-slate-400">
-                  Para renderizar com FFmpeg nativo super leve e sem travamento, abra a pasta do projeto e dê 2 cliques em <strong className="text-purple-300">iniciar_motor.bat</strong>.
+                <p className="text-[11px] text-slate-300">
+                  Renderiza as 27 combinações diretamente pelo processador com o FFmpeg nativo, gerando vídeos perfeitos e ultrarrápidos.
                 </p>
               </div>
             )}

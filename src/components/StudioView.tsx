@@ -31,8 +31,8 @@ import { renderHighImpactCoverToPngBlob } from '../services/videoRenderer';
 import { clearAudioBufferCache } from '../services/audioManager';
 import { BatchDownloadModal } from './BatchDownloadModal';
 import { AutoSplitModal } from './AutoSplitModal';
-import { checkFFmpegServerHealth, uploadClipToFFmpegServer } from '../services/ffmpegApiService';
-import { Cpu, Flame, Scissors } from 'lucide-react';
+import { checkFFmpegServerHealth, uploadClipToFFmpegServer, triggerNativeMotorStartup } from '../services/ffmpegApiService';
+import { Cpu, Flame, Scissors, ExternalLink } from 'lucide-react';
 
 interface StudioViewProps {
   project: Project;
@@ -226,6 +226,7 @@ export const StudioView: React.FC<StudioViewProps> = ({
   const slotInputRefs = useRef<{ [key: string]: HTMLInputElement | null }>({});
 
   const [ffmpegOnline, setFfmpegOnline] = useState<boolean>(false);
+  const [isStartingMotor, setIsStartingMotor] = useState<boolean>(false);
 
   // Verifica status do motor FFmpeg local
   useEffect(() => {
@@ -235,12 +236,31 @@ export const StudioView: React.FC<StudioViewProps> = ({
       if (active) setFfmpegOnline(st.online);
     };
     probe();
-    const interval = setInterval(probe, 8000);
+    const interval = setInterval(probe, 5000);
     return () => {
       active = false;
       clearInterval(interval);
     };
   }, []);
+
+  const handleStartNativeMotor = async () => {
+    setIsStartingMotor(true);
+    triggerNativeMotorStartup();
+    let tries = 0;
+    const interval = setInterval(async () => {
+      tries++;
+      const st = await checkFFmpegServerHealth();
+      if (st.online) {
+        setFfmpegOnline(true);
+        setIsStartingMotor(false);
+        clearInterval(interval);
+        showNotice('🚀 Motor FFmpeg Nativo iniciado e conectado com sucesso!');
+      } else if (tries >= 12) {
+        setIsStartingMotor(false);
+        clearInterval(interval);
+      }
+    }, 1000);
+  };
 
   const showNotice = (msg: string) => {
     setUploadNotice(msg);
@@ -969,13 +989,28 @@ export const StudioView: React.FC<StudioViewProps> = ({
                   <span>Motor FFmpeg Nativo: Ativo</span>
                 </span>
               ) : (
-                <span
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-900 text-slate-400 border border-slate-700/60 text-[11px] font-mono cursor-help"
-                  title="Para renderização com FFmpeg nativo super rápida e fluida, execute iniciar_motor.bat na pasta do projeto"
-                >
-                  <span className="w-2 h-2 rounded-full bg-slate-500"></span>
-                  <span>FFmpeg: Offline (Clique no .bat)</span>
-                </span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={handleStartNativeMotor}
+                    disabled={isStartingMotor}
+                    className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-amber-500/20 hover:from-amber-500/30 hover:to-orange-500/30 text-amber-300 border border-amber-500/40 text-[11px] font-mono transition-all cursor-pointer shadow-[0_0_12px_rgba(245,158,11,0.25)] hover:scale-[1.02] active:scale-[0.98]"
+                    title="Clique para iniciar o motor nativo em segundo plano automaticamente no seu computador"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+                    <Zap className="w-3 h-3 text-amber-400" />
+                    <span>{isStartingMotor ? 'Iniciando Motor...' : 'Iniciar Motor Nativo (1-Clique)'}</span>
+                  </button>
+                  <a
+                    href="http://localhost:5050"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700/60 text-[10px] font-mono transition-colors"
+                    title="Abrir versão local conectada diretamente no processador"
+                  >
+                    <span>Local</span>
+                    <ExternalLink className="w-2.5 h-2.5" />
+                  </a>
+                </div>
               )}
             </div>
           </div>
