@@ -32,3 +32,4 @@ Write-Host "Protocolo clip27:// registrado!"
 # 3. Inicia o motor nativo imediatamente em segundo plano
 Start-Process "wscript.exe" -ArgumentList "`"$vbsPath`""
 Write-Host "Motor iniciado via WScript!"
+

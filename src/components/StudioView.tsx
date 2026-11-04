@@ -34,6 +34,8 @@ import { AutoSplitModal } from './AutoSplitModal';
 import { checkFFmpegServerHealth, uploadClipToFFmpegServer, triggerNativeMotorStartup } from '../services/ffmpegApiService';
 import { Cpu, Flame, Scissors, ExternalLink } from 'lucide-react';
 
+export const ALL_VIDEO_FORMATS_ACCEPT = "video/*,.mp4,.mov,.webm,.mkv,.avi,.wmv,.flv,.m4v,.ts,.3gp,.ogv,.mpg,.mpeg";
+
 interface StudioViewProps {
   project: Project;
   onUpdateProject: (updated: Partial<Project>) => void;
@@ -281,8 +283,21 @@ export const StudioView: React.FC<StudioViewProps> = ({
     const clipId = `user-${type}-${slotIndex + 1}-${Date.now()}`;
     const defaultDur = type === 'hook' ? 4.0 : type === 'body' ? 7.0 : 3.5;
 
-    const { duration: detectedDuration, thumbnailDataUrl } =
+    let { duration: detectedDuration, thumbnailDataUrl } =
       await extractVideoFirstFrameAndDuration(url, defaultDur);
+
+    // Sincroniza com o servidor FFmpeg local (aceita MKV, AVI, MOV, WEBM, MP4, etc.)
+    const tipoBackend = type === 'hook' ? 'gancho' : type === 'body' ? 'corpo' : 'cta';
+    try {
+      const serverRes = await uploadClipToFFmpegServer(file, tipoBackend, (slotIndex + 1) as 1 | 2 | 3);
+      if (serverRes.thumbnailDataUrl && !thumbnailDataUrl) {
+        thumbnailDataUrl = serverRes.thumbnailDataUrl;
+      }
+      if (serverRes.duracao && (!detectedDuration || detectedDuration === defaultDur)) {
+        detectedDuration = serverRes.duracao;
+      }
+    } catch {}
+
     registerClipBlob(clipId, file, url, detectedDuration, thumbnailDataUrl);
 
     const newClip: VideoClip = {
@@ -298,10 +313,6 @@ export const StudioView: React.FC<StudioViewProps> = ({
     };
 
     clearAudioBufferCache();
-
-    // Sincroniza em segundo plano com o servidor FFmpeg local se estiver online
-    const tipoBackend = type === 'hook' ? 'gancho' : type === 'body' ? 'corpo' : 'cta';
-    uploadClipToFFmpegServer(file, tipoBackend, (slotIndex + 1) as 1 | 2 | 3).catch(() => {});
 
     const currentProj = latestProjectRef.current;
     let updatedHooks = [...currentProj.hooks];
@@ -530,8 +541,20 @@ export const StudioView: React.FC<StudioViewProps> = ({
       else targetSlotIdx = i % 3;
 
       const clipId = `user-${type}-${targetSlotIdx + 1}-${Date.now()}-${i}`;
-      const { duration: detectedDuration, thumbnailDataUrl } =
+      let { duration: detectedDuration, thumbnailDataUrl } =
         await extractVideoFirstFrameAndDuration(url, defaultDur);
+
+      // Envia para o motor nativo FFmpeg (aceita MP4, MOV, MKV, WebM, AVI, etc.) e obtém dados extraídos
+      try {
+        const serverRes = await uploadClipToFFmpegServer(file, tipoBackend, (targetSlotIdx + 1) as 1 | 2 | 3);
+        if (serverRes.thumbnailDataUrl && !thumbnailDataUrl) {
+          thumbnailDataUrl = serverRes.thumbnailDataUrl;
+        }
+        if (serverRes.duracao && (!detectedDuration || detectedDuration === defaultDur)) {
+          detectedDuration = serverRes.duracao;
+        }
+      } catch {}
+
       registerClipBlob(clipId, file, url, detectedDuration, thumbnailDataUrl);
 
       const newClip: VideoClip = {
@@ -550,9 +573,6 @@ export const StudioView: React.FC<StudioViewProps> = ({
         targetSlots.push({} as any);
       }
       targetSlots[targetSlotIdx] = newClip;
-
-      // Envia em segundo plano para o backend FFmpeg
-      uploadClipToFFmpegServer(file, tipoBackend, (targetSlotIdx + 1) as 1 | 2 | 3).catch(() => {});
     }
 
     targetSlots = targetSlots.filter((c) => c && c.id).slice(0, 3);
@@ -1138,7 +1158,7 @@ export const StudioView: React.FC<StudioViewProps> = ({
                       ref={(el) => {
                         slotInputRefs.current[`hook_${slotIdx}`] = el;
                       }}
-                      accept="video/mp4,video/quicktime,video/webm"
+                      accept={ALL_VIDEO_FORMATS_ACCEPT}
                       className="hidden"
                       onChange={(e) =>
                         e.target.files?.[0] && handleUploadSlot('hook', slotIdx, e.target.files[0])
@@ -1211,7 +1231,7 @@ export const StudioView: React.FC<StudioViewProps> = ({
                             {code}
                           </span>
                           <span className="text-slate-400 group-hover:text-purple-200 font-medium text-[11px]">
-                            + Carregar {label} (.mp4, .mov)
+                            + Carregar {label} (Todos os Formatos)
                           </span>
                         </div>
                         <Upload className="w-3.5 h-3.5 text-purple-400 group-hover:scale-110 transition-transform" />
@@ -1229,7 +1249,7 @@ export const StudioView: React.FC<StudioViewProps> = ({
               type="file"
               ref={hookInputRef}
               multiple
-              accept="video/mp4,video/quicktime,video/webm"
+              accept={ALL_VIDEO_FORMATS_ACCEPT}
               className="hidden"
               onChange={(e) => handleAddFiles(e.target.files, 'hook')}
             />
@@ -1238,7 +1258,7 @@ export const StudioView: React.FC<StudioViewProps> = ({
               className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-purple-500/40 hover:border-purple-500/80 bg-purple-950/30 hover:bg-purple-900/40 text-xs font-semibold text-purple-200 transition-all cursor-pointer"
             >
               <Upload className="w-3.5 h-3.5" />
-              <span>Subir os 3 Ganchos de Uma Vez (.mp4, .mov)</span>
+              <span>Subir os 3 Ganchos (Todos os Formatos)</span>
             </button>
             {project.hooks.length > 0 && (
               <button
@@ -1285,7 +1305,7 @@ export const StudioView: React.FC<StudioViewProps> = ({
                       ref={(el) => {
                         slotInputRefs.current[`body_${slotIdx}`] = el;
                       }}
-                      accept="video/mp4,video/quicktime,video/webm"
+                      accept={ALL_VIDEO_FORMATS_ACCEPT}
                       className="hidden"
                       onChange={(e) =>
                         e.target.files?.[0] && handleUploadSlot('body', slotIdx, e.target.files[0])
@@ -1358,7 +1378,7 @@ export const StudioView: React.FC<StudioViewProps> = ({
                             {code}
                           </span>
                           <span className="text-slate-400 group-hover:text-blue-200 font-medium text-[11px]">
-                            + Carregar {label} (.mp4, .mov)
+                            + Carregar {label} (Todos os Formatos)
                           </span>
                         </div>
                         <Upload className="w-3.5 h-3.5 text-blue-400 group-hover:scale-110 transition-transform" />
@@ -1376,7 +1396,7 @@ export const StudioView: React.FC<StudioViewProps> = ({
               type="file"
               ref={bodyInputRef}
               multiple
-              accept="video/mp4,video/quicktime,video/webm"
+              accept={ALL_VIDEO_FORMATS_ACCEPT}
               className="hidden"
               onChange={(e) => handleAddFiles(e.target.files, 'body')}
             />
@@ -1385,7 +1405,7 @@ export const StudioView: React.FC<StudioViewProps> = ({
               className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-blue-500/40 hover:border-blue-500/80 bg-blue-950/30 hover:bg-blue-900/40 text-xs font-semibold text-blue-200 transition-all cursor-pointer"
             >
               <Upload className="w-3.5 h-3.5" />
-              <span>Subir os 3 Corpos de Uma Vez (.mp4, .mov)</span>
+              <span>Subir os 3 Corpos (Todos os Formatos)</span>
             </button>
             {project.bodies.length > 0 && (
               <button
@@ -1432,7 +1452,7 @@ export const StudioView: React.FC<StudioViewProps> = ({
                       ref={(el) => {
                         slotInputRefs.current[`cta_${slotIdx}`] = el;
                       }}
-                      accept="video/mp4,video/quicktime,video/webm"
+                      accept={ALL_VIDEO_FORMATS_ACCEPT}
                       className="hidden"
                       onChange={(e) =>
                         e.target.files?.[0] && handleUploadSlot('cta', slotIdx, e.target.files[0])
@@ -1505,7 +1525,7 @@ export const StudioView: React.FC<StudioViewProps> = ({
                             {code}
                           </span>
                           <span className="text-slate-400 group-hover:text-emerald-200 font-medium text-[11px]">
-                            + Carregar {label} (.mp4, .mov)
+                            + Carregar {label} (Todos os Formatos)
                           </span>
                         </div>
                         <Upload className="w-3.5 h-3.5 text-emerald-400 group-hover:scale-110 transition-transform" />
@@ -1523,7 +1543,7 @@ export const StudioView: React.FC<StudioViewProps> = ({
               type="file"
               ref={ctaInputRef}
               multiple
-              accept="video/mp4,video/quicktime,video/webm"
+              accept={ALL_VIDEO_FORMATS_ACCEPT}
               className="hidden"
               onChange={(e) => handleAddFiles(e.target.files, 'cta')}
             />
@@ -1532,7 +1552,7 @@ export const StudioView: React.FC<StudioViewProps> = ({
               className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-emerald-500/40 hover:border-emerald-500/80 bg-emerald-950/30 hover:bg-emerald-900/40 text-xs font-semibold text-emerald-200 transition-all cursor-pointer"
             >
               <Upload className="w-3.5 h-3.5" />
-              <span>Subir os 3 CTAs de Uma Vez (.mp4, .mov)</span>
+              <span>Subir os 3 CTAs (Todos os Formatos)</span>
             </button>
             {project.ctas.length > 0 && (
               <button

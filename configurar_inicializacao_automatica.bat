@@ -40,3 +40,4 @@ echo   - O Studio Clip27 detectara o motor como ATIVO automaticamente!
 echo =====================================================================
 echo.
 timeout /t 3 >nul
+

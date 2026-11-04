@@ -69,20 +69,35 @@ export async function uploadClipToFFmpegServer(
   file: File,
   tipo: 'gancho' | 'corpo' | 'cta',
   slot: 1 | 2 | 3
-): Promise<boolean> {
+): Promise<{ sucesso: boolean; thumbnailDataUrl?: string; duracao?: number }> {
   try {
     const buffer = await file.arrayBuffer();
-    const res = await fetch(`${SERVER_URL}/api/upload-clip?tipo=${tipo}&slot=${slot}`, {
+    const ext = file.name.split('.').pop() || 'mp4';
+    const params = new URLSearchParams({
+      tipo,
+      slot: String(slot),
+      nome: file.name,
+      ext,
+    });
+    const res = await fetch(`${SERVER_URL}/api/upload-clip?${params.toString()}`, {
       method: 'POST',
       headers: {
         'Content-Type': file.type || 'video/mp4',
       },
       body: buffer,
     });
-    return res.ok;
+    if (res.ok) {
+      const data = await res.json();
+      return {
+        sucesso: true,
+        thumbnailDataUrl: data.thumbnailDataUrl,
+        duracao: data.duracao,
+      };
+    }
+    return { sucesso: false };
   } catch (err) {
     console.error(`[FFmpegApi] Erro ao enviar clipe ${tipo}_${slot}:`, err);
-    return false;
+    return { sucesso: false };
   }
 }
 
@@ -171,8 +186,11 @@ export async function autoSplitVideoViaFFmpegServer(
   model?: string
 ): Promise<AutoSplitResponse> {
   const buffer = await file.arrayBuffer();
+  const ext = file.name.split('.').pop() || 'mp4';
   const queryParams = new URLSearchParams({
     slot: String(slotIndex),
+    nome: file.name,
+    ext,
     api_key: openRouterApiKey || '',
     modelo: model || 'google/gemini-2.0-flash-exp:free',
   });

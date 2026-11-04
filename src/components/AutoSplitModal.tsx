@@ -297,7 +297,7 @@ export const AutoSplitModal: React.FC<AutoSplitModalProps> = ({
             type="file"
             ref={fileInputRef}
             onChange={handleFileChange}
-            accept="video/mp4,video/quicktime,video/webm"
+            accept="video/*,.mp4,.mov,.webm,.mkv,.avi,.wmv,.flv,.m4v,.ts,.3gp,.ogv,.mpg,.mpeg"
             multiple
             className="hidden"
           />
@@ -305,7 +305,7 @@ export const AutoSplitModal: React.FC<AutoSplitModalProps> = ({
             <Upload className="w-6 h-6 text-fuchsia-400" />
           </div>
           <p className="text-sm font-bold text-white mb-1">
-            Clique para selecionar de 1 a 3 vídeos brutos (.mp4, .mov)
+            Clique para selecionar de 1 a 3 vídeos brutos (Todos os formatos: MP4, MOV, MKV, WebM, AVI, etc.)
           </p>
           <p className="text-xs text-slate-400 max-w-md">
             Você pode subir 1 vídeo longo para fatiar nos primeiros slots (G1, C1, CTA1) ou subir 3 vídeos para preencher os 9 slots da matriz combinatória completa!

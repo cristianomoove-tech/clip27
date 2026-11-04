@@ -558,7 +558,7 @@ export function isGenericCampaignOrClipName(raw?: string): boolean {
 function cleanProductLabel(rawName?: string): string {
   if (!rawName) return '';
   const cleaned = rawName
-    .replace(/\.mp4|\.mov|\.webm/gi, '')
+    .replace(/\.(mp4|mov|webm|mkv|avi|wmv|flv|m4v|ts|3gp|ogv|mpeg|mpg)$/gi, '')
     .replace(/^(Gancho|Corpo|CTA)\s*\d*:\s*/i, '')
     .replace(/#\d+$/g, '')
     .trim();

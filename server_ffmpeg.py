@@ -23,6 +23,8 @@ import time
 import shutil
 import zipfile
 import threading
+import base64
+import subprocess
 from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
@@ -35,6 +37,7 @@ from motor_ffmpeg import (
     auto_split_video_com_whisper_e_llm,
     gerar_arquivo_ass,
     corrigir_legendas_openrouter,
+    obter_duracao_video,
     FFMPEG_BIN
 )
 
@@ -45,6 +48,35 @@ PASTA_SAIDA = PASTA_PROJETO / "saida_combinacoes"
 
 PASTA_UPLOADS.mkdir(parents=True, exist_ok=True)
 PASTA_SAIDA.mkdir(parents=True, exist_ok=True)
+
+# Tabela de MIME types para aceitar e reconhecer todo e qualquer formato de vídeo
+MIMES_VIDEO = {
+    ".mp4": "video/mp4",
+    ".mov": "video/quicktime",
+    ".webm": "video/webm",
+    ".mkv": "video/x-matroska",
+    ".avi": "video/x-msvideo",
+    ".wmv": "video/x-ms-wmv",
+    ".flv": "video/x-flv",
+    ".m4v": "video/x-m4v",
+    ".ts": "video/mp2t",
+    ".3gp": "video/3gpp",
+    ".mpg": "video/mpeg",
+    ".mpeg": "video/mpeg",
+    ".ogv": "video/ogg"
+}
+
+def encontrar_clipe_slot(pasta: Path, tipo: str, slot: int) -> str:
+    """Busca o clipe do slot aceitando QUALQUER formato de vídeo (mp4, mov, webm, mkv, avi, wmv, flv, etc.)"""
+    extensoes = [".mp4", ".mov", ".webm", ".mkv", ".avi", ".wmv", ".flv", ".m4v", ".ts", ".3gp", ".mpeg", ".mpg", ".ogv"]
+    for ext in extensoes:
+        candidato = pasta / f"{tipo}_{slot}{ext}"
+        if candidato.exists() and candidato.is_file() and candidato.stat().st_size > 0:
+            return str(candidato)
+    for f in pasta.glob(f"{tipo}_{slot}.*"):
+        if f.is_file() and not f.name.startswith("thumb_") and f.stat().st_size > 0:
+            return str(f)
+    return str(pasta / f"{tipo}_{slot}.mp4")
 
 # Estado global do processo de renderização
 ESTADO_RENDER = {
@@ -146,15 +178,18 @@ class ServidorClip27Handler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"erro": str(e)}).encode("utf-8"))
                 return
 
-        # Servir clipe individual do motor_uploads se solicitado
+        # Servir clipe individual do motor_uploads se solicitado (qualquer formato)
         if caminho.startswith("/api/clip/"):
             nome_arquivo = caminho.replace("/api/clip/", "")
             clip_file = PASTA_UPLOADS / nome_arquivo
             if clip_file.exists():
+                ext = clip_file.suffix.lower()
+                ctype = MIMES_VIDEO.get(ext, "video/mp4")
                 tamanho = os.path.getsize(clip_file)
                 self.send_response(200)
                 self.send_header("Access-Control-Allow-Origin", "*")
-                self.send_header("Content-Type", "video/mp4")
+                self.send_header("Access-Control-Allow-Private-Network", "true")
+                self.send_header("Content-Type", ctype)
                 self.send_header("Content-Length", str(tamanho))
                 self.end_headers()
                 with open(clip_file, "rb") as f:
@@ -228,15 +263,29 @@ class ServidorClip27Handler(BaseHTTPRequestHandler):
         caminho = parsed.path
 
         if caminho == "/api/upload-clip":
-            # Recebe o envio binário de um clipe específico (ex: Gancho 1, Gancho 2, etc.)
+            # Recebe o envio binário de um clipe específico aceitando QUALQUER formato de vídeo (MP4, MOV, MKV, WebM, AVI, etc.)
             try:
                 content_type_header = self.headers.get('content-type', '')
                 ctype = content_type_header.split(';')[0].strip()
                 params = parse_qs(parsed.query)
                 clip_tipo = params.get('tipo', ['gancho'])[0] # 'gancho', 'corpo', 'cta'
                 clip_slot = params.get('slot', ['1'])[0]      # '1', '2', '3'
+                nome_param = params.get('nome', [''])[0]
+                ext_param = params.get('ext', [''])[0].lower().lstrip('.')
 
-                nome_salvo = f"{clip_tipo}_{clip_slot}.mp4"
+                if not ext_param and nome_param and '.' in nome_param:
+                    ext_param = nome_param.split('.')[-1].lower()
+                if not ext_param:
+                    ext_param = "mp4"
+
+                # Limpa arquivos anteriores com outros formatos neste slot
+                for f_antigo in PASTA_UPLOADS.glob(f"{clip_tipo}_{clip_slot}.*"):
+                    try:
+                        f_antigo.unlink()
+                    except Exception:
+                        pass
+
+                nome_salvo = f"{clip_tipo}_{clip_slot}.{ext_param}"
                 caminho_salvo = PASTA_UPLOADS / nome_salvo
 
                 # Lê os dados binários do corpo
@@ -246,11 +295,39 @@ class ServidorClip27Handler(BaseHTTPRequestHandler):
                 with open(caminho_salvo, "wb") as f:
                     f.write(dados)
 
+                # Extrai thumbnail rápido via FFmpeg (compatível com QUALQUER codec/formato)
+                thumbnail_base64 = None
+                duracao = 4.0
+                try:
+                    caminho_thumb = PASTA_UPLOADS / f"thumb_{clip_tipo}_{clip_slot}.jpg"
+                    cmd_thumb = [
+                        FFMPEG_BIN, "-y",
+                        "-ss", "0.08",
+                        "-i", str(caminho_salvo),
+                        "-vframes", "1",
+                        "-vf", "scale=540:960:force_original_aspect_ratio=increase,crop=540:960",
+                        "-q:v", "3",
+                        str(caminho_thumb)
+                    ]
+                    subprocess.run(cmd_thumb, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+                    if caminho_thumb.exists():
+                        with open(caminho_thumb, "rb") as tf:
+                            b64 = base64.b64encode(tf.read()).decode("utf-8")
+                            thumbnail_base64 = f"data:image/jpeg;base64,{b64}"
+
+                    duracao = obter_duracao_video(str(caminho_salvo))
+                except Exception as e:
+                    print(f"[!] Aviso ao extrair thumbnail via FFmpeg: {e}")
+
                 resposta = {
                     "sucesso": True,
                     "arquivo": str(caminho_salvo),
+                    "nome": nome_salvo,
                     "tipo": clip_tipo,
                     "slot": int(clip_slot),
+                    "formato": ext_param,
+                    "duracao": round(duracao, 1),
+                    "thumbnailDataUrl": thumbnail_base64,
                     "tamanho_bytes": len(dados)
                 }
                 self._enviar_headers_cors(200)
@@ -261,22 +338,35 @@ class ServidorClip27Handler(BaseHTTPRequestHandler):
             return
 
         if caminho == "/api/auto-split":
-            # Auto-Splitter com IA: recebe vídeo longo, transcreve com faster-whisper, analisa com LLM e fatia com FFmpeg
+            # Auto-Splitter com IA: recebe vídeo longo (em qualquer formato: MP4, MOV, MKV, WebM, AVI, etc.)
             try:
                 params = parse_qs(parsed.query)
                 slot_index = params.get('slot', ['1'])[0]
                 api_key = params.get('api_key', [''])[0]
                 modelo = params.get('modelo', ['google/gemini-2.0-flash-exp:free'])[0]
+                nome_param = params.get('nome', [''])[0]
+                ext_param = params.get('ext', [''])[0].lower().lstrip('.')
+                if not ext_param and nome_param and '.' in nome_param:
+                    ext_param = nome_param.split('.')[-1].lower()
+                if not ext_param:
+                    ext_param = "mp4"
 
                 tamanho_corpo = int(self.headers.get('content-length', 0))
                 dados = self.rfile.read(tamanho_corpo)
 
-                nome_bruto = f"video_bruto_{slot_index}.mp4"
+                # Remove versões anteriores de video_bruto_{slot_index}.*
+                for f_antigo in PASTA_UPLOADS.glob(f"video_bruto_{slot_index}.*"):
+                    try:
+                        f_antigo.unlink()
+                    except Exception:
+                        pass
+
+                nome_bruto = f"video_bruto_{slot_index}.{ext_param}"
                 caminho_bruto = PASTA_UPLOADS / nome_bruto
                 with open(caminho_bruto, "wb") as f:
                     f.write(dados)
 
-                print(f"[*] Auto-Splitter acionado para o vídeo bruto slot {slot_index} ({len(dados)/(1024*1024):.1f} MB)...")
+                print(f"[*] Auto-Splitter acionado para o vídeo bruto slot {slot_index} ({len(dados)/(1024*1024):.1f} MB, formato {ext_param})...")
 
                 res_split = auto_split_video_com_whisper_e_llm(
                     caminho_video=str(caminho_bruto),
@@ -326,21 +416,21 @@ class ServidorClip27Handler(BaseHTTPRequestHandler):
                 micro_edits = bool(dados.get("micro_edits", True))
                 manchetes = dados.get("manchetes", [])
 
-                # Identifica caminhos dos arquivos de entrada
+                # Identifica caminhos dos arquivos de entrada aceitando qualquer formato existente
                 ganchos = [
-                    str(PASTA_UPLOADS / "gancho_1.mp4"),
-                    str(PASTA_UPLOADS / "gancho_2.mp4"),
-                    str(PASTA_UPLOADS / "gancho_3.mp4")
+                    encontrar_clipe_slot(PASTA_UPLOADS, "gancho", 1),
+                    encontrar_clipe_slot(PASTA_UPLOADS, "gancho", 2),
+                    encontrar_clipe_slot(PASTA_UPLOADS, "gancho", 3)
                 ]
                 corpos = [
-                    str(PASTA_UPLOADS / "corpo_1.mp4"),
-                    str(PASTA_UPLOADS / "corpo_2.mp4"),
-                    str(PASTA_UPLOADS / "corpo_3.mp4")
+                    encontrar_clipe_slot(PASTA_UPLOADS, "corpo", 1),
+                    encontrar_clipe_slot(PASTA_UPLOADS, "corpo", 2),
+                    encontrar_clipe_slot(PASTA_UPLOADS, "corpo", 3)
                 ]
                 ctas = [
-                    str(PASTA_UPLOADS / "cta_1.mp4"),
-                    str(PASTA_UPLOADS / "cta_2.mp4"),
-                    str(PASTA_UPLOADS / "cta_3.mp4")
+                    encontrar_clipe_slot(PASTA_UPLOADS, "cta", 1),
+                    encontrar_clipe_slot(PASTA_UPLOADS, "cta", 2),
+                    encontrar_clipe_slot(PASTA_UPLOADS, "cta", 3)
                 ]
 
                 # Se o payload enviar caminhos personalizados
